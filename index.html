@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0b0b0d">
+<title>Endless Stair</title>
+<style>
+  :root { --ink: #f2efe6; --bg: #0b0b0d; }
+  html, body {
+    margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    overflow: hidden; overscroll-behavior: none;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
+  }
+  #game {
+    position: fixed; inset: 0; width: 100vw; height: 100dvh;
+    image-rendering: pixelated; image-rendering: crisp-edges;
+    touch-action: none; display: block;
+  }
+  #hud {
+    position: fixed; top: calc(env(safe-area-inset-top) + 14px); right: 14px;
+    display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+    pointer-events: none;
+  }
+  #flag {
+    background: var(--ink); color: var(--bg); font-weight: 700; font-size: 18px;
+    padding: 3px 12px 3px 18px; min-width: 36px; text-align: right;
+    clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, 10px 50%);
+  }
+  #maxCombo { font-size: 11px; letter-spacing: 1px; opacity: .85; text-shadow: 0 0 3px #000; font-variant-numeric: tabular-nums; }
+  #energy { width: 72px; height: 4px; border: 1px solid var(--ink); }
+  .power { width: 72px; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; text-shadow: 0 0 3px #000; }
+  .power[hidden] { display: none; }
+  .power b { font-size: 12px; letter-spacing: 1px; }
+  .power i { display: block; height: 3px; width: 100%; max-width: 72px; }
+  #pStar b { color: #ffe14a; }
+  #pStar i { background: #ffe14a; }
+  #pShoe b { color: #39d3ff; }
+  #pShoe i { background: #39d3ff; }
+  #energy > i { display: block; height: 100%; width: 100%; background: var(--ink); }
+  .overlay {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 14px; text-align: center;
+    pointer-events: none; text-shadow: 0 0 6px #000, 0 0 2px #000;
+  }
+  .overlay[hidden] { display: none; }
+  .overlay > * { background: var(--bg); padding: 4px 10px; }
+  .overlay h1 { margin: 0; font-size: 30px; letter-spacing: 4px; }
+  .overlay p { margin: 0; font-size: 14px; line-height: 1.7; }
+  .blink { animation: blink 1.1s steps(2, start) infinite; }
+  @keyframes blink { to { visibility: hidden; } }
+  #combo {
+    position: fixed; top: calc(env(safe-area-inset-top) + 12px); left: 14px;
+    display: flex; flex-direction: column; line-height: 1; pointer-events: none;
+    font-variant-numeric: tabular-nums; text-shadow: 0 0 4px #000;
+  }
+  #combo[hidden] { display: none; }
+  #combo b { font-size: 40px; }
+  #combo span { font-size: 11px; letter-spacing: 3px; }
+  #combo.bump b { animation: bump .18s ease-out; }
+  @keyframes bump { from { transform: scale(1.35); } to { transform: scale(1); } }
+  body.fever #combo b, body.fever #banner {
+    background: linear-gradient(90deg, #ff3b6b, #ffd23b, #3bffb0, #3bb8ff, #b43bff, #ff3b6b);
+    background-size: 200% 100%; -webkit-background-clip: text; background-clip: text;
+    color: transparent; text-shadow: none; animation: prism .6s linear infinite;
+  }
+  body.fever #combo.bump b { animation: prism .6s linear infinite, bump .18s ease-out; }
+  @keyframes prism { to { background-position: 200% 0; } }
+  #judge {
+    position: fixed; left: 0; right: 0; top: 40%; text-align: center;
+    font-size: 16px; font-weight: 700; letter-spacing: 3px; pointer-events: none;
+    opacity: 0; text-shadow: 0 0 4px #000, 0 0 2px #000;
+  }
+  #judge[data-kind="great"] { font-size: 20px; }
+  #judge[data-kind="miss"] { color: #8a8a8a; }
+  #judge.pop { animation: pop .45s ease-out; }
+  @keyframes pop {
+    0% { opacity: 1; transform: translateY(6px) scale(1.25); }
+    70% { opacity: 1; transform: translateY(-4px) scale(1); }
+    100% { opacity: 0; transform: translateY(-8px); }
+  }
+  #banner {
+    position: fixed; left: 0; right: 0; top: 28%; text-align: center;
+    font-size: 44px; font-weight: 800; letter-spacing: 4px; font-style: italic;
+    pointer-events: none; opacity: 0;
+  }
+  #banner[data-kind="down"] { color: #9a9a9a; font-style: normal; font-size: 32px; }
+  #banner.show { animation: banner 1.1s ease-out; }
+  #banner[data-kind="down"].show { animation: bannerDown .8s ease-in; }
+  @keyframes banner {
+    0% { opacity: 0; transform: scale(2.4) rotate(-6deg); }
+    15% { opacity: 1; transform: scale(1) rotate(-3deg); }
+    75% { opacity: 1; transform: scale(1.05) rotate(-3deg); }
+    100% { opacity: 0; transform: scale(1.4) rotate(-3deg); }
+  }
+  @keyframes bannerDown {
+    0% { opacity: 1; transform: translateY(0); }
+    100% { opacity: 0; transform: translateY(40px); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #combo.bump b, #banner.show, #banner[data-kind="down"].show { animation: none; }
+    #banner.show { opacity: 1; }
+  }
+  #hint { position: fixed; inset: 0; pointer-events: none; font-size: 12px; opacity: .7; }
+  #hint .up { top: 69%; position: absolute; left: 16px; right: 16px; display: flex; justify-content: space-between; }
+  #count {
+    position: fixed; left: 0; right: 0; top: 32%; text-align: center; pointer-events: none;
+    font-size: 88px; font-weight: 800; line-height: 1; opacity: 0; text-shadow: 0 0 8px #000, 0 0 3px #000;
+  }
+  #count[data-kind="go"] { font-size: 52px; letter-spacing: 4px; font-style: italic; color: #ffd23b; }
+  #count.pop { animation: countPop .46s ease-out; }
+  #count[data-kind="go"].pop { animation: countGo .8s ease-out; }
+  @keyframes countPop {
+    0% { opacity: 1; transform: scale(1.6); }
+    35% { opacity: 1; transform: scale(1); }
+    100% { opacity: 0; transform: scale(.85); }
+  }
+  @keyframes countGo {
+    0% { opacity: 1; transform: scale(2.2) rotate(-4deg); }
+    25% { opacity: 1; transform: scale(1) rotate(-4deg); }
+    75% { opacity: 1; transform: scale(1.05) rotate(-4deg); }
+    100% { opacity: 0; transform: scale(1.3) rotate(-4deg); }
+  }
+  #over .label { font-size: 12px; letter-spacing: 6px; opacity: .8; }
+  #over #overTitle { font-size: 13px; letter-spacing: 4px; color: #9a9a9a; }
+  #finalScore { font-size: 72px; line-height: 1; font-variant-numeric: tabular-nums; }
+  #finalScore.land { animation: land .35s ease-out; }
+  @keyframes land { 0% { transform: scale(1.5); } 60% { transform: scale(.94); } 100% { transform: scale(1); } }
+  #newBest { color: #ffd23b; font-weight: 800; letter-spacing: 3px; font-size: 18px; }
+  #over.enter { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="hud">
+  <div id="flag">0</div>
+  <div id="maxCombo">MAX 0</div>
+  <div id="energy"><i></i></div>
+  <div id="pStar" class="power" hidden><b>★ 無敵</b><i></i></div>
+  <div id="pShoe" class="power" hidden><b>×2 COMBO</b><i></i></div>
+</div>
+
+<div id="combo" hidden><b>0</b><span>COMBO</span></div>
+<div id="judge"></div>
+<div id="banner"></div>
+<div id="count"></div>
+
+<div id="title" class="overlay">
+  <h1>ENDLESS<br>STAIR</h1>
+  <p>BGMのビートに合わせて<br>次の段がある側をタップ</p>
+  <p>下のノーツが中央で重なる瞬間がビート<br>前の段がある側をタップすると一段下る</p>
+  <p>スコア ＝ 稼いだコンボの合計<br>20コンボで FEVER!!<br><span style="color:#b84dff">■</span> <span style="color:#ff3355">▲</span> 色付きの敵に当たると一発アウト<br><span style="color:#ffe14a">★</span> 無敵7秒　<span style="color:#39d3ff">羽の靴</span> コンボ2倍5秒</p>
+  <p class="blink">TAP TO START</p>
+  <p>♪ 音を出して遊んでね</p>
+</div>
+
+<div id="over" class="overlay" hidden>
+  <p id="overTitle">FELL</p>
+  <p class="label">SCORE</p>
+  <h1 id="finalScore">0</h1>
+  <p id="newBest" hidden>NEW BEST!</p>
+  <p>MAX COMBO <b id="finalCombo">0</b><br>BEST <b id="bestScore">0</b></p>
+  <p id="toTitle" class="blink" hidden>TAP TO TITLE</p>
+</div>
+
+<div id="hint">
+  <div class="up"><span>◀ 左上へ</span><span>右上へ ▶</span></div>
+</div>
+
+<script src="music.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
