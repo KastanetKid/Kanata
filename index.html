@@ -33,6 +33,8 @@
     clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, 10px 50%);
   }
   #energy { width: 72px; height: 4px; border: 1px solid var(--ink); }
+  #hearts { font-size: 16px; letter-spacing: 2px; color: #ff3355; text-shadow: 0 0 3px #000; }
+  #hearts .lost { color: #444; }
   #energy > i { display: block; height: 100%; width: 100%; background: var(--ink); }
   .overlay {
     position: fixed; inset: 0; display: flex; flex-direction: column;
@@ -97,11 +99,9 @@
     #combo.bump b, #banner.show, #banner[data-kind="down"].show { animation: none; }
     #banner.show { opacity: 1; }
   }
-  #hint {
-    position: fixed; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom) + 22px);
-    display: flex; justify-content: space-between; padding: 0 28px;
-    font-size: 13px; opacity: .75; pointer-events: none;
-  }
+  #hint { position: fixed; inset: 0; pointer-events: none; font-size: 12px; opacity: .7; }
+  #hint .up { top: 69%; position: absolute; left: 16px; right: 16px; display: flex; justify-content: space-between; }
+  #hint .down { position: fixed; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom) + 20px); text-align: center; }
 </style>
 </head>
 <body>
@@ -110,6 +110,7 @@
 <div id="hud">
   <div id="flag">0</div>
   <div id="energy"><i></i></div>
+  <div id="hearts"></div>
 </div>
 
 <div id="combo" hidden><b>0</b><span>COMBO</span></div>
@@ -119,18 +120,22 @@
 <div id="title" class="overlay">
   <h1>ENDLESS<br>STAIR</h1>
   <p>BGMのビートに合わせて<br>次の段がある側をタップ</p>
-  <p>20コンボで FEVER!!</p>
+  <p>下のノーツが中央で重なる瞬間がビート<br>画面の下の帯をタップで一段下る</p>
+  <p>20コンボで FEVER!!<br><span style="color:#b84dff">■</span> <span style="color:#ff3355">▲</span> 色付きの敵に3回当たるとアウト</p>
   <p class="blink">TAP TO START</p>
   <p>♪ 音を出して遊んでね</p>
 </div>
 
 <div id="over" class="overlay" hidden>
-  <h1>FELL</h1>
+  <h1 id="overTitle">FELL</h1>
   <p>SCORE <b id="finalScore">0</b><br>MAX COMBO <b id="finalCombo">0</b><br>BEST <b id="bestScore">0</b></p>
   <p class="blink">TAP TO RETRY</p>
 </div>
 
-<div id="hint"><span>◀ 左上へ</span><span>右上へ ▶</span></div>
+<div id="hint">
+  <div class="up"><span>◀ 左上へ</span><span>右上へ ▶</span></div>
+  <div class="down">▼ ここをタップで下る ▼</div>
+</div>
 
 <script src="music.js"></script>
 <script src="game.js"></script>

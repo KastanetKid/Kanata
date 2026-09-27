@@ -262,7 +262,14 @@ const Music = (() => {
     if (kind === 'great') osc('square', mtof(84 + [0, 4, 7, 12][n % 4]), t, 0.06, 0.05, master);
     else if (kind === 'good') osc('square', mtof(79), t, 0.05, 0.035, master);
     else if (kind === 'off') osc('triangle', 150, t, 0.08, 0.12, master);
-    else if (kind === 'fall') {
+    else if (kind === 'slam') {
+      osc('sine', 90, t, 0.25, 0.5, master);
+      noise(t, 0.12, 0.3, 'lowpass', 900, master);
+    } else if (kind === 'hurt') {
+      osc('square', 180, t, 0.18, 0.12, master);
+      osc('sawtooth', 120, t + 0.05, 0.2, 0.1, master);
+      noise(t, 0.15, 0.25, 'bandpass', 2500, master);
+    } else if (kind === 'fall') {
       const o = ac.createOscillator();
       const g = ac.createGain();
       o.type = 'triangle';

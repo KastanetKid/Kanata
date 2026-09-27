@@ -10,6 +10,7 @@ const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
 const INK = [242, 239, 230];
 const BG = [11, 11, 13];
+const INK_CSS = `rgb(${INK.join(',')})`;
 
 // 4x4 ベイヤー行列（ディザのしきい値）
 const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map(v => (v + 0.5) / 16);
@@ -35,6 +36,18 @@ const HOP_TIME = 0.09;
 const GREAT_WINDOW = 0.07;
 const GOOD_WINDOW = 0.13;
 const FEVER_AT = 20;
+
+// 操作：画面の下からこの割合までをタップすると一段下る
+const DOWN_ZONE = 0.16;
+// ノーツレーンの高さ（画面の割合）
+const LANE_Y = 0.78;
+const NOTE_BEATS = 2; // ノーツが端から中央まで何拍かけて飛んでくるか
+
+const MAX_HP = 3;
+const ENEMY_START = 8; // この段数を越えたら敵が出始める
+
+const RED = '#ff3355';
+const PURPLE = '#b84dff';
 
 // ---------- スプライト ----------
 const HERO = [
@@ -70,6 +83,35 @@ const GHOST = [
   '#.##.##.',
   '...#..#.',
 ];
+// 敵：o = 本体色、w = 白目、k = 黒
+const BAT = [
+  [
+    '#.......#',
+    '##.....##',
+    '###ooo###',
+    '.#owokw#.',
+    '...ooo...',
+  ],
+  [
+    '.........',
+    '...ooo...',
+    '.##owow##',
+    '###ooo###',
+    '#.......#',
+  ],
+];
+const CRUSHER = [
+  'oooooooooooo',
+  'o##########o',
+  'o#kk####kk#o',
+  'o##kk##kk##o',
+  'o##ww##ww##o',
+  'o##wk##kw##o',
+  'o##########o',
+  'o#kkkkkkkk#o',
+  'oooooooooooo',
+  'o.o.o..o.o.o',
+];
 
 function drawSprite(sprite, x, y, flip, lum, outline) {
   const h = sprite.length, w = sprite[0].length;
@@ -80,9 +122,26 @@ function drawSprite(sprite, x, y, flip, lum, outline) {
       if (sprite[r][flip ? w - 1 - c : c] === '#') ctx.fillRect(x + c - 1, y + r - 1, 3, 3);
     }
   }
-  ctx.fillStyle = lum === 1 ? `rgb(${INK.join(',')})` : gray(lum);
+  ctx.fillStyle = lum === 1 ? INK_CSS : gray(lum);
   for (let r = 0; r < h; r++) for (let c = 0; c < w; c++) {
     if (sprite[r][flip ? w - 1 - c : c] === '#') ctx.fillRect(x + c, y + r, 1, 1);
+  }
+}
+
+// 色付きスプライト（ディザ後に描くので色がそのまま出る）
+// '#' と 'o' = 本体色、'w' = 白、'k' = 黒
+function drawColorSprite(sprite, x, y, color, flip) {
+  const h = sprite.length, w = sprite[0].length;
+  x = Math.round(x); y = Math.round(y);
+  ctx.fillStyle = '#000';
+  for (let r = 0; r < h; r++) for (let c = 0; c < w; c++) {
+    if (sprite[r][flip ? w - 1 - c : c] !== '.') ctx.fillRect(x + c - 1, y + r - 1, 3, 3);
+  }
+  for (let r = 0; r < h; r++) for (let c = 0; c < w; c++) {
+    const ch = sprite[r][flip ? w - 1 - c : c];
+    if (ch === '.') continue;
+    ctx.fillStyle = ch === 'w' ? INK_CSS : ch === 'k' ? '#000' : color;
+    ctx.fillRect(x + c, y + r, 1, 1);
   }
 }
 
@@ -108,14 +167,16 @@ for (let i = 0; i < 256; i++) {
   };
   PRISM.push([k(0), k(4), k(2)]);
 }
+const prismCss = i => `rgb(${PRISM[i & 255].join(',')})`;
 const CONFETTI_COLORS = ['#ff3b6b', '#ffd23b', '#3bffb0', '#3bb8ff', '#b43bff', '#ffffff', '#ff8a3b'];
 
 // ---------- 状態 ----------
 let state = 'title'; // title | play | dead
 let steps, player, cam, energy, score, ghosts, particles, deadTimer, time, started;
 let combo, maxCombo, fever, lastHitBeat, lastHitTime;
+let hp, invincible, enemies, hitBeats, laneFx;
 let confetti = [];
-let shake = 0, zoom = 0, flash = 0, dark = 0, beatPulse = 0, prevBeat = null, cannonSide = 1;
+let shake = 0, zoom = 0, flash = 0, dark = 0, redFlash = 0, beatPulse = 0, prevBeat = null, cannonSide = 1;
 let best = 0;
 try { best = Number(localStorage.getItem('endless-stair-best')) || 0; } catch (e) { /* ストレージ不可でも遊べる */ }
 
@@ -144,6 +205,9 @@ function reset() {
   ghosts = [];
   particles = [];
   confetti = [];
+  enemies = [];
+  laneFx = [];
+  hitBeats = new Set();
   deadTimer = 0;
   started = false;
   combo = 0;
@@ -151,12 +215,14 @@ function reset() {
   fever = false;
   lastHitBeat = -1;
   lastHitTime = 0;
+  hp = MAX_HP;
+  invincible = 0;
   document.body.classList.remove('fever');
   updateHud();
 }
 
 // ---------- 入力 ----------
-function onPress(side) {
+function onPress(action) {
   if (!Music.ready) Music.init();
   Music.start();
   if (state === 'title') {
@@ -173,17 +239,20 @@ function onPress(side) {
     }
     return;
   }
-  climb(side);
+  if (action === 'down') descend();
+  else climb(action);
 }
 
 canvas.addEventListener('pointerdown', e => {
   e.preventDefault();
-  onPress(e.clientX < window.innerWidth / 2 ? -1 : 1);
+  if (e.clientY > window.innerHeight * (1 - DOWN_ZONE)) onPress('down');
+  else onPress(e.clientX < window.innerWidth / 2 ? -1 : 1);
 });
 window.addEventListener('keydown', e => {
   if (e.repeat) return;
   if (e.key === 'ArrowLeft' || e.key === 'a') onPress(-1);
   else if (e.key === 'ArrowRight' || e.key === 'd') onPress(1);
+  else if (e.key === 'ArrowDown' || e.key === 's') onPress('down');
   else if (e.key === ' ' || e.key === 'Enter') onPress(player ? player.dir : 1);
 });
 document.addEventListener('gesturestart', e => e.preventDefault());
@@ -199,44 +268,75 @@ function judgeTap() {
   return { kind: 'off', beat: b };
 }
 
-function climb(side) {
-  if (player.falling) return;
-  // 前のホップ中なら着地させてから次へ
-  if (player.t < 1) { player.t = 1; player.x = steps[player.idx].x; player.y = steps[player.idx].y; }
+// 移動したあとのリズム判定・コンボ処理（上り・下り共通）
+function applyRhythm(gain) {
+  const j = judgeTap();
+  started = true;
+  if (j.kind === 'off') {
+    energy = Math.min(1, energy + gain * 0.4);
+    Music.sfx('off');
+    breakCombo('OFF BEAT');
+    return;
+  }
+  energy = Math.min(1, energy + (j.kind === 'great' ? gain : gain * 0.75));
+  combo++;
+  maxCombo = Math.max(maxCombo, combo);
+  if (j.beat) {
+    lastHitBeat = j.beat.index;
+    lastHitTime = j.beat.time;
+    hitBeats.add(j.beat.index);
+    hitBeats.delete(j.beat.index - 16);
+  }
+  laneFx.push({ t: 0, kind: j.kind });
+  Music.sfx(j.kind, combo);
+  showJudge(j.kind === 'great' ? 'GREAT' : 'GOOD', j.kind);
+  shake += fever ? 1.5 : 0.6;
+  if (combo === FEVER_AT) enterFever();
+}
 
-  const next = steps[player.idx + 1];
-  player.dir = side;
+function landHop() {
+  if (player.t < 1) { player.t = 1; player.x = steps[player.idx].x; player.y = steps[player.idx].y; }
   player.fx = player.x; player.fy = player.y;
   player.t = 0;
   player.frame ^= 1;
+}
+
+function climb(side) {
+  if (player.falling) return;
+  landHop();
+  const next = steps[player.idx + 1];
+  player.dir = side;
 
   if (next.dir !== side) {
     // 段のない方へ踏み出した → 落下
-    fall(side);
+    die('FELL', side);
     return;
   }
 
-  const j = judgeTap();
-  started = true;
   player.idx++;
-  score = player.idx;
+  score = Math.max(score, player.idx);
   while (steps.length < player.idx + 60) genStep();
   dust(next.x, next.y);
+  applyRhythm(0.12);
+  checkCrush();
+  updateHud();
+}
 
-  if (j.kind === 'off') {
-    energy = Math.min(1, energy + 0.05);
+function descend() {
+  if (player.falling) return;
+  if (player.idx === 0) {
+    // 一番下からは下りられない
     Music.sfx('off');
     breakCombo('OFF BEAT');
-  } else {
-    energy = Math.min(1, energy + (j.kind === 'great' ? 0.12 : 0.09));
-    combo++;
-    maxCombo = Math.max(maxCombo, combo);
-    if (j.beat) { lastHitBeat = j.beat.index; lastHitTime = j.beat.time; }
-    Music.sfx(j.kind, combo);
-    showJudge(j.kind === 'great' ? 'GREAT' : 'GOOD', j.kind);
-    shake += fever ? 1.5 : 0.6;
-    if (combo === FEVER_AT) enterFever();
+    return;
   }
+  landHop();
+  const cur = steps[player.idx];
+  player.dir = -cur.dir; // 来た方向を向いて下りる
+  player.idx--;
+  dust(steps[player.idx].x, steps[player.idx].y);
+  applyRhythm(0.08);
+  checkCrush();
   updateHud();
 }
 
@@ -249,7 +349,7 @@ function enterFever() {
   showBanner('FEVER!!');
   Music.setFever(true);
   burstConfetti(60);
-  try { navigator.vibrate && navigator.vibrate([30, 40, 60]); } catch (e) { /* 非対応端末 */ }
+  vibrate([30, 40, 60]);
 }
 
 function breakCombo(label) {
@@ -267,35 +367,117 @@ function breakCombo(label) {
     document.body.classList.remove('fever');
     showBanner('BREAK', true);
     Music.setFever(false);
-    try { navigator.vibrate && navigator.vibrate(80); } catch (e) { /* 非対応端末 */ }
+    vibrate(80);
   }
   updateHud();
 }
 
-function fall(side) {
+function hurt() {
+  if (invincible > 0 || player.falling) return;
+  hp--;
+  invincible = 1.6;
+  redFlash = 1;
+  shake += 9;
+  Music.sfx('hurt');
+  vibrate([60, 30, 60]);
+  breakCombo('HIT!');
+  updateHud();
+  if (hp <= 0) die('K.O.', -player.dir);
+}
+
+function die(reason, side) {
   player.falling = true;
   player.vx = side * 28;
   player.vy = -60;
   player.t = 1;
   state = 'dead';
   deadTimer = 0;
-  if (combo > 0 || fever) breakCombo('FALL');
+  if (combo > 0 || fever) breakCombo(reason === 'K.O.' ? 'K.O.' : 'FALL');
   Music.sfx('fall');
   Music.setMuffled(true);
   shake += 5;
-  try { navigator.vibrate && navigator.vibrate(120); } catch (e) { /* 非対応端末 */ }
+  vibrate(120);
   if (score > best) {
     best = score;
     try { localStorage.setItem('endless-stair-best', String(best)); } catch (e) { /* 無視 */ }
   }
+  document.getElementById('overTitle').textContent = reason;
   document.getElementById('finalScore').textContent = score;
   document.getElementById('finalCombo').textContent = maxCombo;
   document.getElementById('bestScore').textContent = best;
 }
 
+function vibrate(p) {
+  try { navigator.vibrate && navigator.vibrate(p); } catch (e) { /* 非対応端末 */ }
+}
+
+// ---------- 敵 ----------
+// クラッシャー：先の段の上で予告 → 拍に合わせて落下 → 1拍居座って戻る
+// コウモリ：画面端に「!」で予告 → ある段の高さを横切る
+function spawnEnemy() {
+  const busy = new Set(enemies.filter(e => e.type === 'crusher').map(e => e.step));
+  if (Math.random() < 0.55) {
+    const step = player.idx + 2 + ((Math.random() * 2) | 0);
+    if (busy.has(step) || busy.has(step - 1) || busy.has(step + 1)) return;
+    enemies.push({ type: 'crusher', step, phase: 'warn', beats: 3, anim: 0 });
+  } else {
+    const step = player.idx + ((Math.random() * 3) | 0);
+    const side = Math.random() < 0.5 ? -1 : 1;
+    enemies.push({
+      type: 'bat', step, side, phase: 'warn', beats: 2,
+      x: 0, y: steps[step].y - 5, vx: -side * (W + 20) / (3 * Music.BEAT), flap: 0,
+    });
+  }
+}
+
+function enemiesOnBeat() {
+  for (const e of enemies) {
+    e.beats--;
+    if (e.type === 'crusher') {
+      if (e.phase === 'warn' && e.beats <= 0) {
+        e.phase = 'slam'; e.beats = 1; e.anim = 0;
+        shake += 3;
+        Music.sfx('slam');
+      } else if (e.phase === 'slam' && e.beats <= 0) {
+        e.phase = 'rise'; e.anim = 0;
+      }
+    } else if (e.type === 'bat' && e.phase === 'warn' && e.beats <= 0) {
+      e.phase = 'fly';
+      e.x = cam.x + e.side * (W / 2 + 8);
+    }
+  }
+}
+
+function checkCrush() {
+  for (const e of enemies) {
+    if (e.type === 'crusher' && e.phase === 'slam' && player.idx === e.step) hurt();
+  }
+}
+
+function updateEnemies(dt) {
+  for (const e of enemies) {
+    if (e.type === 'crusher') {
+      e.anim = Math.min(1, e.anim + dt / (e.phase === 'slam' ? 0.06 : 0.3));
+      if (e.phase === 'slam' && !player.falling && player.idx === e.step && player.t >= 1) hurt();
+      if (e.phase === 'rise' && e.anim >= 1) e.dead = true;
+      if (e.step < player.idx - 12) e.dead = true;
+    } else if (e.type === 'bat') {
+      e.flap += dt * 10;
+      if (e.phase === 'fly') {
+        e.x += e.vx * dt;
+        const bx = e.x, by = e.y + Math.sin(e.flap * 0.6) * 1.5;
+        if (!player.falling && Math.abs(bx - player.x) < 6 && Math.abs(by - (player.y - 5)) < 5) hurt();
+        if (Math.abs(e.x - cam.x) > W / 2 + 14 && Math.sign(e.x - cam.x) === -e.side) e.dead = true;
+      }
+    }
+  }
+  enemies = enemies.filter(e => !e.dead);
+}
+
 // ---------- HUD ----------
 const flagEl = document.getElementById('flag');
 const energyEl = document.querySelector('#energy > i');
+const heartsEl = document.getElementById('hearts');
 const comboEl = document.getElementById('combo');
 const comboNumEl = comboEl.querySelector('b');
 const judgeEl = document.getElementById('judge');
@@ -306,6 +488,7 @@ function updateHud() {
   comboNumEl.textContent = combo;
   comboEl.hidden = combo < 2;
   retrigger(comboEl, 'bump');
+  heartsEl.innerHTML = '<span>♥</span>'.repeat(Math.max(0, hp)) + '<span class="lost">♥</span>'.repeat(MAX_HP - Math.max(0, hp));
 }
 
 function retrigger(el, cls) {
@@ -361,7 +544,7 @@ function beatConfetti() {
   const n = Math.min(30, 10 + level * 4);
   cannonSide = -cannonSide;
   const x = cannonSide < 0 ? -2 : W + 2;
-  for (let i = 0; i < n; i++) confetti.push(makeConfetti(x, H * (0.7 + Math.random() * 0.25), -cannonSide));
+  for (let i = 0; i < n; i++) confetti.push(makeConfetti(x, H * (0.6 + Math.random() * 0.2), -cannonSide));
   for (let i = 0; i < 4; i++) {
     confetti.push({
       x: Math.random() * W, y: -3, vx: (Math.random() - 0.5) * 20, vy: 10 + Math.random() * 20,
@@ -389,6 +572,13 @@ function onBeat() {
     zoom = 1;
     beatConfetti();
   }
+  if (state === 'play') {
+    enemiesOnBeat();
+    if (started && score >= ENEMY_START && enemies.length < 2) {
+      const chance = Math.min(0.3, 0.08 + (score - ENEMY_START) * 0.002);
+      if (Math.random() < chance) spawnEnemy();
+    }
+  }
 }
 
 function update(dt) {
@@ -408,12 +598,13 @@ function update(dt) {
     energy -= drain * dt;
     if (energy <= 0) {
       energy = 0;
-      fall(player.dir);
+      die('FELL', player.dir);
     }
     // 次の拍を叩かずにやり過ごしたらコンボ切れ
     if (combo > 0 && Music.now() > lastHitTime + Music.BEAT + GOOD_WINDOW + 0.02) breakCombo('MISS');
   }
   energyEl.style.width = `${Math.max(0, energy) * 100}%`;
+  invincible = Math.max(0, invincible - dt);
 
   if (state === 'dead') deadTimer += dt;
   if (state === 'dead' && deadTimer > 0.7) document.getElementById('over').hidden = false;
@@ -436,6 +627,8 @@ function update(dt) {
     cam.x += (player.x - cam.x) * k;
     cam.y += (player.y - cam.y) * k;
   }
+
+  if (state === 'play') updateEnemies(dt);
 
   // 幽霊
   if (Math.random() < dt * 0.25 && ghosts.length < 3) spawnGhost();
@@ -462,11 +655,15 @@ function update(dt) {
   }
   confetti = confetti.filter(c => c.life > 0 && c.y < H + 4);
 
+  for (const f of laneFx) f.t += dt;
+  laneFx = laneFx.filter(f => f.t < 0.3);
+
   // 演出の減衰
   shake *= Math.exp(-10 * dt);
   zoom *= Math.exp(-8 * dt);
   flash *= Math.exp(-5 * dt);
   dark *= Math.exp(-6 * dt);
+  redFlash *= Math.exp(-6 * dt);
   beatPulse *= Math.exp(-9 * dt);
 
   const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -479,7 +676,7 @@ function update(dt) {
 }
 
 // ---------- 描画 ----------
-const ANCHOR_Y = 0.64; // プレイヤーを画面のどの高さに置くか
+const ANCHOR_Y = 0.6; // プレイヤーを画面のどの高さに置くか
 function sx(x, par = 1) { return Math.round((x - cam.x) * par + W / 2); }
 function sy(y, par = 1) { return Math.round((y - cam.y) * par + H * ANCHOR_Y); }
 
@@ -582,6 +779,8 @@ function drawGhosts() {
 }
 
 function drawPlayer() {
+  // 被弾直後の無敵中は点滅
+  if (invincible > 0 && !player.falling && Math.floor(invincible * 12) % 2 === 0) return;
   const sprite = player.t < 1 || player.frame ? HERO_STEP : HERO;
   drawSprite(sprite, sx(player.x) - 3, sy(player.y) - 9, player.dir < 0, 1, true);
 }
@@ -591,25 +790,112 @@ function drawParticles() {
   for (const p of particles) ctx.fillRect(sx(p.x), sy(p.y), 1, 1);
 }
 
-// 画面下のビートガイド：左右から寄ってくる線が中央で重なった瞬間が拍
-function drawBeatGuide() {
+function drawEnemies() {
+  const blink = Math.floor(time * 8) % 2 === 0;
+  for (const e of enemies) {
+    if (e.type === 'crusher') {
+      const s = steps[e.step];
+      const x = sx(s.x) - 6;
+      const top = sy(s.y);
+      const high = top - 38 + Math.sin(time * 5) * 1.5;
+      const low = top - 10;
+      let y;
+      if (e.phase === 'warn') {
+        y = high;
+        // 落下地点の予告（点滅する印と残り拍数）
+        if (blink || e.beats <= 1) {
+          ctx.fillStyle = PURPLE;
+          for (let i = 0; i < STEP_W; i += 2) ctx.fillRect(x + i, top - 1, 1, 1);
+          ctx.fillRect(x + 5, top - 4, 2, 2);
+        }
+        ctx.fillStyle = PURPLE;
+        for (let b = 0; b < e.beats; b++) ctx.fillRect(x + 12 + 2, y + 1 + b * 3, 2, 2);
+      } else if (e.phase === 'slam') {
+        y = high + (low - high) * e.anim;
+      } else {
+        y = low + (high - 20 - low) * e.anim;
+      }
+      drawColorSprite(CRUSHER, x, y, PURPLE, false);
+    } else if (e.type === 'bat') {
+      const s = steps[e.step];
+      const by = sy(s.y) - 7;
+      if (e.phase === 'warn') {
+        if (blink) {
+          const ex = e.side < 0 ? 2 : W - 5;
+          ctx.fillStyle = RED;
+          ctx.fillRect(ex + 1, by - 2, 2, 5);
+          ctx.fillRect(ex + 1, by + 4, 2, 2);
+          // 通り道のライン
+          for (let i = 0; i < W; i += 4) ctx.fillRect(i, by + 2, 1, 1);
+        }
+      } else {
+        const frame = BAT[Math.floor(e.flap) % 2];
+        drawColorSprite(frame, sx(e.x) - 4, sy(e.y) - 2 + Math.sin(e.flap * 0.6) * 1.5, RED, e.vx < 0);
+      }
+    }
+  }
+}
+
+// ノーツレーン：左右から飛んでくるアイコンが中央のリングで重なる瞬間が拍
+function drawNotes() {
   if (!Music.ready || state === 'title') return;
-  const y = H - 28;
-  const cx = W / 2;
   const lb = Music.lastBeatTime();
   if (lb === null) return;
   const now = Music.now();
-  ctx.fillStyle = gray(0.35 + beatPulse * 0.65);
-  ctx.fillRect(cx - 2, y - 2, 5, 5);
-  ctx.fillStyle = gray(1);
-  ctx.fillRect(cx - 1, y - 1, 3, 3);
-  for (let k = 1; k <= 3; k++) {
-    const dt = lb + k * Music.BEAT - now;
-    const d = Math.round(dt / Music.BEAT * 16) + 4;
-    const lum = 0.9 - (k - 1) * 0.25;
-    ctx.fillStyle = gray(lum);
-    ctx.fillRect(cx - d - 1, y - 2, 1, 5);
-    ctx.fillRect(cx + d + 1, y - 2, 1, 5);
+  const y = Math.round(H * LANE_Y);
+  const cx = Math.floor(W / 2);
+  const span = cx - 4;
+
+  ctx.fillStyle = 'rgba(0,0,0,0.72)';
+  ctx.fillRect(0, y - 7, W, 15);
+  ctx.fillStyle = 'rgba(242,239,230,0.35)';
+  ctx.fillRect(0, y - 7, W, 1);
+  ctx.fillRect(0, y + 7, W, 1);
+
+  // 中央の判定リング（拍で脈打つ）
+  const r = 4 + Math.round(beatPulse * 2);
+  ctx.strokeStyle = fever ? prismCss(time * 300) : INK_CSS;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(cx - r + 0.5, y - r + 0.5, r * 2, r * 2);
+
+  // 判定エフェクト（広がる四角）
+  for (const f of laneFx) {
+    const rr = 5 + f.t * 30;
+    ctx.globalAlpha = 1 - f.t / 0.3;
+    ctx.strokeStyle = f.kind === 'great' ? '#ffd23b' : INK_CSS;
+    ctx.strokeRect(cx - rr + 0.5, y - rr + 0.5, rr * 2, rr * 2);
+    ctx.globalAlpha = 1;
+  }
+
+  const beatIdx = Music.nearestBeat(lb).index;
+  for (let k = -1; k <= NOTE_BEATS + 1; k++) {
+    const t = lb + k * Music.BEAT;
+    const idx = beatIdx + k;
+    const dt = t - now;
+    if (dt > NOTE_BEATS * Music.BEAT || dt < -GOOD_WINDOW) continue;
+    if (hitBeats.has(idx)) continue;
+    const d = Math.round(Math.max(0, dt) / (NOTE_BEATS * Music.BEAT) * span);
+    let color = INK_CSS;
+    if (fever) color = prismCss(idx * 40);
+    if (dt < 0) color = '#666';
+    // 4拍目ごとに大きめのノーツ（小節の頭）
+    const big = idx % 4 === 0;
+    drawNote(cx - d, y, color, big);
+    drawNote(cx + d, y, color, big);
+  }
+}
+
+function drawNote(x, y, color, big) {
+  ctx.fillStyle = '#000';
+  const s = big ? 3 : 2;
+  for (let i = -s - 1; i <= s + 1; i++) {
+    const w = s + 1 - Math.abs(i);
+    ctx.fillRect(x - w, y + i, w * 2 + 1, 1);
+  }
+  ctx.fillStyle = color;
+  for (let i = -s; i <= s; i++) {
+    const w = s - Math.abs(i);
+    ctx.fillRect(x - w, y + i, w * 2 + 1, 1);
   }
 }
 
@@ -651,17 +937,30 @@ function drawConfetti() {
   }
 }
 
+function drawDownZone() {
+  if (state === 'title') return;
+  const y = Math.round(H * (1 - DOWN_ZONE));
+  ctx.fillStyle = 'rgba(242,239,230,0.3)';
+  for (let x = 0; x < W; x += 3) ctx.fillRect(x, y, 2, 1);
+}
+
 function render() {
   ctx.globalAlpha = 1;
   drawBackground();
   drawGhosts();
   drawStairs();
   drawParticles();
-  drawBeatGuide();
   dither();
-  // 主人公はディザ・プリズムの影響を受けないよう後から描く
+  // ここから下はディザをかけずに色付きで描く
+  drawEnemies();
   drawPlayer();
   drawConfetti();
+  if (redFlash > 0.02) {
+    ctx.fillStyle = `rgba(255,40,70,${(redFlash * 0.45).toFixed(3)})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+  drawNotes();
+  drawDownZone();
 }
 
 // ---------- ループ ----------
