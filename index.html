@@ -101,7 +101,14 @@
   }
   #hint { position: fixed; inset: 0; pointer-events: none; font-size: 12px; opacity: .7; }
   #hint .up { top: 69%; position: absolute; left: 16px; right: 16px; display: flex; justify-content: space-between; }
-  #hint .down { position: fixed; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom) + 20px); text-align: center; }
+  #over .label { font-size: 12px; letter-spacing: 6px; opacity: .8; }
+  #over #overTitle { font-size: 13px; letter-spacing: 4px; color: #9a9a9a; }
+  #finalScore { font-size: 72px; line-height: 1; font-variant-numeric: tabular-nums; }
+  #finalScore.land { animation: land .35s ease-out; }
+  @keyframes land { 0% { transform: scale(1.5); } 60% { transform: scale(.94); } 100% { transform: scale(1); } }
+  #newBest { color: #ffd23b; font-weight: 800; letter-spacing: 3px; font-size: 18px; }
+  #over.enter { animation: fadeIn .4s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 </style>
 </head>
 <body>
@@ -120,21 +127,23 @@
 <div id="title" class="overlay">
   <h1>ENDLESS<br>STAIR</h1>
   <p>BGMのビートに合わせて<br>次の段がある側をタップ</p>
-  <p>下のノーツが中央で重なる瞬間がビート<br>画面の下の帯をタップで一段下る</p>
+  <p>下のノーツが中央で重なる瞬間がビート<br>前の段がある側をタップすると一段下る</p>
   <p>20コンボで FEVER!!<br><span style="color:#b84dff">■</span> <span style="color:#ff3355">▲</span> 色付きの敵に3回当たるとアウト</p>
   <p class="blink">TAP TO START</p>
   <p>♪ 音を出して遊んでね</p>
 </div>
 
 <div id="over" class="overlay" hidden>
-  <h1 id="overTitle">FELL</h1>
-  <p>SCORE <b id="finalScore">0</b><br>MAX COMBO <b id="finalCombo">0</b><br>BEST <b id="bestScore">0</b></p>
-  <p class="blink">TAP TO RETRY</p>
+  <p id="overTitle">FELL</p>
+  <p class="label">SCORE</p>
+  <h1 id="finalScore">0</h1>
+  <p id="newBest" hidden>NEW BEST!</p>
+  <p>MAX COMBO <b id="finalCombo">0</b><br>BEST <b id="bestScore">0</b></p>
+  <p id="toTitle" class="blink" hidden>TAP TO TITLE</p>
 </div>
 
 <div id="hint">
   <div class="up"><span>◀ 左上へ</span><span>右上へ ▶</span></div>
-  <div class="down">▼ ここをタップで下る ▼</div>
 </div>
 
 <script src="music.js"></script>

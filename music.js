@@ -5,10 +5,11 @@
 // 判定はその拍の時刻とタップ時刻の差で行う。
 
 const Music = (() => {
-  const BPM = 128;
-  const STEP = 60 / BPM / 4;     // 16 分音符の長さ（秒）
-  const BEAT = 60 / BPM;
-  const LOOKAHEAD = 0.12;
+  const BASE_BPM = 128;
+  // 画面描画が重くても音の予約が間に合うよう、少し長めに先読みする
+  const LOOKAHEAD = 0.35;
+  let bpm = BASE_BPM;
+  let pendingBpm = null; // テンポ変更は次の小節頭から
 
   // F → G → Em → Am（IV-V-iii-vi）
   const CHORDS = [[53, 57, 60], [55, 59, 62], [52, 55, 59], [57, 60, 64]];
@@ -27,7 +28,7 @@ const Music = (() => {
   let nextTime = 0;
   let step = 0;
   let timer = null;
-  const beats = [];   // 直近の拍 {time, index}
+  const beats = [];   // 直近の拍 {time, index, bpm}
   let beatIndex = 0;
 
   const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
@@ -73,7 +74,8 @@ const Music = (() => {
     if (timer) return;
     nextTime = ac.currentTime + 0.1;
     step = 0;
-    timer = setInterval(schedule, 25);
+    latency = (ac.outputLatency || 0) + (ac.baseLatency || 0);
+    timer = setInterval(schedule, 20);
     schedule();
   }
 
@@ -129,6 +131,7 @@ const Music = (() => {
 
   // ---- 1 ステップ分の譜面 ----
   function playStep(s, t) {
+    const step16 = 60 / bpm / 4;
     const inBar = s % 16;
     const bar = Math.floor(s / 16) % 4;
     const chord = CHORDS[bar];
@@ -139,16 +142,16 @@ const Music = (() => {
     if (inBar % 4 === 2) noise(t, 0.04, 0.12, 'highpass', 8000, normalBus);
     if (inBar % 2 === 0) {
       const root = chord[0] - 24 + (inBar % 4 === 2 ? 12 : 0);
-      osc('sawtooth', mtof(root), t, STEP * 1.8, 0.16, normalBus, 900);
+      osc('sawtooth', mtof(root), t, step16 * 1.8, 0.16, normalBus, 900);
     }
     if (inBar === 6 || inBar === 14) {
-      for (const n of chord) osc('square', mtof(n), t, STEP * 1.5, 0.035, normalBus, 3000);
+      for (const n of chord) osc('square', mtof(n), t, step16 * 1.5, 0.035, normalBus, 3000);
     }
     const m = MELODY[bar][inBar];
-    if (m !== null) osc('square', mtof(tone(m) + 12), t, STEP * 1.6, 0.05, normalBus, 5000);
+    if (m !== null) osc('square', mtof(tone(m) + 12), t, step16 * 1.6, 0.05, normalBus, 5000);
 
     // フィーバーレイヤー（常に鳴らしておき、音量で出し入れする）
-    osc('square', mtof(tone(ARP[inBar]) + 24), t, STEP * 0.9, 0.04, feverBus, 7000);
+    osc('square', mtof(tone(ARP[inBar]) + 24), t, step16 * 0.9, 0.04, feverBus, 7000);
     if (inBar === 4 || inBar === 12) {
       noise(t, 0.14, 0.35, 'bandpass', 1400, feverBus);
       osc('triangle', 190, t, 0.08, 0.2, feverBus);
@@ -162,54 +165,75 @@ const Music = (() => {
     // タブ復帰などで大きく遅れていたら今に合わせる
     if (nextTime < ac.currentTime - 0.2) nextTime = ac.currentTime + 0.05;
     while (nextTime < ac.currentTime + LOOKAHEAD) {
+      if (step % 16 === 0 && pendingBpm) {
+        bpm = pendingBpm;
+        pendingBpm = null;
+      }
       playStep(step, nextTime);
       if (step % 4 === 0) {
-        beats.push({ time: nextTime, index: beatIndex++ });
+        beats.push({ time: nextTime, index: beatIndex++, bpm });
         if (beats.length > 16) beats.shift();
       }
-      nextTime += STEP;
+      nextTime += 60 / bpm / 4;
       step++;
     }
   }
 
   // ---- 時刻・判定 ----
-  function latency() {
-    if (!ac) return 0;
-    return (ac.outputLatency || 0) + (ac.baseLatency || 0);
-  }
-
-  // 実際に耳に届いている「今」
+  // ac.currentTime は数ミリ〜十数ミリ単位でカクカク進むので、
+  // performance.now() との差をなめらかに追いかけて「なめらかな音の時計」を作る
+  let latency = 0;
+  let clockOffset = null;
   function now() {
-    return ac ? ac.currentTime - latency() : 0;
+    if (!ac) return 0;
+    const perf = performance.now() / 1000;
+    const raw = ac.currentTime - perf;
+    if (clockOffset === null || Math.abs(raw - clockOffset) > 0.08) clockOffset = raw;
+    else clockOffset += (raw - clockOffset) * 0.02;
+    const lat = (ac.outputLatency || 0) + (ac.baseLatency || 0);
+    latency += (lat - latency) * 0.01;
+    return perf + clockOffset - latency;
   }
 
-  // 今の時刻に一番近い拍 {index, time, offset(秒, +なら遅れ)}
+  // 記録済みの拍 + この先 ahead 拍分の予定（テンポ変更も考慮）
+  function beatList(ahead = 4) {
+    const list = beats.slice();
+    if (!list.length) return list;
+    let { time, index, bpm: b } = list[list.length - 1];
+    let pend = pendingBpm;
+    for (let k = 0; k < ahead; k++) {
+      time += 60 / b;
+      index++;
+      if (pend && index % 4 === 0) { b = pend; pend = null; }
+      list.push({ time, index, bpm: b });
+    }
+    return list;
+  }
+
+  // 一番近い拍 {index, time, offset(秒, +なら遅れ)}
   function nearestBeat(t = now()) {
     let best = null;
-    // まだ記録されていない次の拍も候補に入れる
-    const list = beats.slice();
-    if (list.length) {
-      const last = list[list.length - 1];
-      list.push({ time: last.time + BEAT, index: last.index + 1 });
-    }
-    for (const b of list) {
+    for (const b of beatList(2)) {
       const off = t - b.time;
       if (!best || Math.abs(off) < Math.abs(best.offset)) best = { index: b.index, time: b.time, offset: off };
     }
     return best;
   }
 
-  // 0（拍の瞬間）〜 1（次の拍の直前）
-  function phase(t = now()) {
-    const b = nearestBeat(t);
-    if (!b) return 0;
-    const p = (t - b.time) / BEAT;
-    return p < 0 ? p + 1 : p;
-  }
-
   function lastBeatTime(t = now()) {
     for (let i = beats.length - 1; i >= 0; i--) if (beats[i].time <= t) return beats[i].time;
     return null;
+  }
+
+  // t より後の最初の拍
+  function beatAfter(t) {
+    for (const b of beatList(4)) if (b.time > t + 0.001) return b;
+    return null;
+  }
+
+  function setTempo(v) {
+    if (v === bpm && !pendingBpm) return;
+    pendingBpm = v === bpm ? null : v;
   }
 
   // ---- 演出 ----
@@ -262,7 +286,10 @@ const Music = (() => {
     if (kind === 'great') osc('square', mtof(84 + [0, 4, 7, 12][n % 4]), t, 0.06, 0.05, master);
     else if (kind === 'good') osc('square', mtof(79), t, 0.05, 0.035, master);
     else if (kind === 'off') osc('triangle', 150, t, 0.08, 0.12, master);
-    else if (kind === 'slam') {
+    else if (kind === 'count') osc('square', mtof(72 + (n % 12)), t, 0.03, 0.03, master);
+    else if (kind === 'fanfare') {
+      [72, 76, 79, 84].forEach((m, i) => osc('square', mtof(m), t + i * 0.08, 0.2, 0.06, master));
+    } else if (kind === 'slam') {
       osc('sine', 90, t, 0.25, 0.5, master);
       noise(t, 0.12, 0.3, 'lowpass', 900, master);
     } else if (kind === 'hurt') {
@@ -282,5 +309,10 @@ const Music = (() => {
     }
   }
 
-  return { BPM, BEAT, init, start, now, nearestBeat, phase, lastBeatTime, setFever, setMuffled, sfx, get ready() { return !!ac; } };
+  return {
+    BASE_BPM, init, start, now, beatList, nearestBeat, lastBeatTime, beatAfter, setTempo, setFever, setMuffled, sfx,
+    get BPM() { return bpm; },
+    get BEAT() { return 60 / bpm; },
+    get ready() { return !!ac; },
+  };
 })();
