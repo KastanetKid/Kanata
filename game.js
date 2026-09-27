@@ -40,6 +40,12 @@ const FEVER_AT = 20;
 // 100 段を越えたらテンポアップ
 const TEMPO_UP_AT = 100;
 const TEMPO_UP_BPM = 140;
+
+// 自動スクロール：カメラが一定の速さで上がっていく（1 拍あたりの段数）
+// 拍どおりに登れば 1 拍 1 段なので、登り続けていれば追いつかれない
+const SCROLL_BASE = 0.5;      // 最初は 2 拍で 1 段
+const SCROLL_MAX = 0.65;      // 高く登っても 3 拍で 2 段くらいまで
+const SCROLL_RAMP = 0.001;    // 1 段登るごとの増え方
 // ノーツレーンの高さ（画面の割合）
 const LANE_Y = 0.78;
 const NOTE_BEATS = 2; // ノーツが端から中央まで何拍かけて飛んでくるか
@@ -213,6 +219,7 @@ let steps, player, cam, energy, score, height, ghosts, particles, deadTimer, tim
 let combo, maxCombo, fever, lastHitBeat, lastHitTime;
 let enemies, hitBeats, laneFx, tempoUp;
 let items, starTime, shoeTime, itemCooldown, lastItemHop = null;
+let scrollY = 0, danger = 0; // 自動スクロールの位置（ワールド座標 y）と、画面下への沈み具合 0〜1
 let result = null; // 結果発表の進行状況
 let countdown = null; // 3・2・1・START! の進行状況
 let startBeat = -1;   // この拍からノーツが流れ、操作できる
@@ -242,6 +249,8 @@ function reset() {
   while (steps.length < 80) genStep();
   player = { idx: 0, x: 0, y: 0, fx: 0, fy: 0, t: 1, dir: 1, frame: 0, vx: 0, vy: 0, falling: false };
   cam = { x: 0, y: 0 };
+  scrollY = 0;
+  danger = 0;
   energy = 1;
   score = 0;  // これまでに稼いだコンボの合計
   height = 0; // 到達した一番高い段（敵・アイテム・テンポアップの目安）
@@ -857,6 +866,7 @@ function spawnGhost() {
 // ---------- 更新 ----------
 function onBeat() {
   beatPulse = 1;
+  if (state === 'play' && danger >= 0.6) Music.sfx('warn');
   if (fever) {
     const level = Math.floor(combo / FEVER_AT);
     shake += 2.5 + level * 1.2;
@@ -921,11 +931,13 @@ function update(dt) {
     player.y = player.fy + (s.y - player.fy) * player.t - Math.sin(Math.PI * player.t) * 3;
   }
 
-  // カメラ（落下中は追わない）
+  updateScroll(dt);
+
+  // カメラ（落下中は追わない）。縦は自動スクロールの位置に合わせる
   if (!player.falling) {
     const k = 1 - Math.exp(-10 * dt);
     cam.x += (player.x - cam.x) * k;
-    cam.y += (player.y - cam.y) * k;
+    cam.y += (scrollY - cam.y) * k;
   }
 
   if (state === 'play') updateEnemies(dt);
@@ -974,6 +986,44 @@ function update(dt) {
   const sc = 1 + (reduce ? 0 : zoom * 0.035);
   const rot = fever && !reduce ? (Math.random() - 0.5) * amp * 0.15 : 0;
   canvas.style.transform = `translate(${sx0.toFixed(1)}px, ${sy0.toFixed(1)}px) scale(${sc.toFixed(3)}) rotate(${rot.toFixed(2)}deg)`;
+}
+
+// 自動スクロール：登っている間は主人公に合わせ、止まる・下ると画面の下へずれていく。
+// ノーツレーンまで沈んだらアウト
+function scrollLimit() {
+  return H * (LANE_Y - ANCHOR_Y) - 10;
+}
+
+function updateScroll(dt) {
+  const footY = steps[player.idx].y;
+  if (state === 'play' && started && !player.falling) {
+    const perBeat = Math.min(SCROLL_MAX, SCROLL_BASE + height * SCROLL_RAMP);
+    scrollY -= perBeat * RISE / Music.BEAT * dt;
+  }
+  if (!player.falling) scrollY = Math.min(scrollY, footY);
+  const prev = danger;
+  danger = Math.max(0, (footY - scrollY) / scrollLimit());
+  if (state === 'play' && danger >= 1) {
+    danger = 1;
+    die('TOO SLOW', player.dir);
+    showBanner('TOO SLOW', true);
+  } else if (prev < 0.6 && danger >= 0.6 && state === 'play') {
+    showJudge('HURRY!', 'miss');
+  }
+}
+
+// 沈んできたら画面の下を赤く光らせ、アウトになる線を見せる
+function drawDanger() {
+  if (state !== 'play' || danger < 0.35) return;
+  const k = Math.min(1, (danger - 0.35) / 0.65);
+  const pulse = 0.6 + beatPulse * 0.4;
+  const bottom = Math.round(H * LANE_Y) - 8;
+  for (let i = 0; i < 24; i++) {
+    ctx.fillStyle = `rgba(255,40,70,${(k * pulse * 0.5 * (i / 24)).toFixed(3)})`;
+    ctx.fillRect(0, bottom - 24 + i, W, 1);
+  }
+  ctx.fillStyle = `rgba(255,60,90,${(0.4 + k * 0.6).toFixed(3)})`;
+  for (let x = (Math.floor(time * 20) % 4); x < W; x += 4) ctx.fillRect(x, bottom, 2, 1);
 }
 
 // ---------- 描画 ----------
@@ -1315,6 +1365,7 @@ function render() {
   drawSparks();
   drawPlayer();
   drawConfetti();
+  drawDanger();
   if (redFlash > 0.02) {
     ctx.fillStyle = `rgba(255,40,70,${(redFlash * 0.45).toFixed(3)})`;
     ctx.fillRect(0, 0, W, H);
