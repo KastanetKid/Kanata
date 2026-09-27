@@ -594,14 +594,34 @@ function vibrate(p) {
 // ---------- 敵 ----------
 // クラッシャー：先の段の上で予告 → 拍に合わせて落下 → 1拍居座って戻る
 // コウモリ：画面端に「!」で予告 → ある段の高さを横切る
+// 段 from〜to が全部同じ向きに並んでいるか（まっすぐな区間か）
+function isStraight(from, to) {
+  if (from < 0) return false;
+  while (steps.length <= to + 1) genStep();
+  for (let k = from + 1; k <= to; k++) if (steps[k].dir !== steps[from].dir) return false;
+  return true;
+}
+
+// 敵は「同じ向きに 3 段以上まっすぐ続く所」にだけ置く。
+// 曲がり角では次の段と前の段が同じ側にあって下れないので、そこには置かない
 function spawnEnemy() {
   const busy = new Set(enemies.filter(e => e.type === 'crusher').map(e => e.step));
+  const pick = list => list[(Math.random() * list.length) | 0];
   if (Math.random() < 0.55) {
-    const step = player.idx + 2 + ((Math.random() * 2) | 0);
-    if (busy.has(step) || busy.has(step - 1) || busy.has(step + 1)) return;
-    enemies.push({ type: 'crusher', step, phase: 'warn', beats: 3, anim: 0 });
+    // クラッシャー：落ちる段とその手前 2 段がまっすぐ → 手前で「下る → 上る」の足踏みができる
+    const cands = [];
+    for (let c = player.idx + 2; c <= player.idx + 4; c++) {
+      if (busy.has(c) || busy.has(c - 1) || busy.has(c + 1)) continue;
+      if (isStraight(c - 2, c)) cands.push(c);
+    }
+    if (!cands.length) return;
+    enemies.push({ type: 'crusher', step: pick(cands), phase: 'warn', beats: 3, anim: 0 });
   } else {
-    const step = player.idx + ((Math.random() * 3) | 0);
+    // コウモリ：横切る段とその上下 1 段がまっすぐ → 上にも下にも逃げられる
+    const cands = [];
+    for (let t = player.idx; t <= player.idx + 2; t++) if (isStraight(t - 1, t + 1)) cands.push(t);
+    if (!cands.length) return;
+    const step = pick(cands);
     const side = Math.random() < 0.5 ? -1 : 1;
     enemies.push({
       type: 'bat', step, side, phase: 'warn', beats: 2,
