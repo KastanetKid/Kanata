@@ -278,6 +278,7 @@ function reset() {
   startBeat = -1;
   if (Music.ready) Music.setTempo(Music.BASE_BPM);
   document.body.classList.remove('fever');
+  comboHome();
   updateHud();
 }
 
@@ -292,7 +293,8 @@ function onPress(action) {
   }
   if (state === 'count') return;
   if (state === 'dead') {
-    if (!result) return;
+    // 結果が表示される前のタップは無視する（先に数え上げが終わって 0 のまま残るのを防ぐ）
+    if (!result || !result.shown) return;
     if (!result.done) finishCount();
     else if (result.doneAt > 0.35) backToTitle();
     return;
@@ -463,8 +465,173 @@ function descend() {
   updateHud();
 }
 
+// ---------- ドット数字 ----------
+// 5×7 のドット文字。キャンバスに 1 ドット＝1px で描き、CSS で拡大表示する
+const DIGITS = {
+  0: ['01110', '10001', '10011', '10101', '11001', '10001', '01110'],
+  1: ['00100', '01100', '00100', '00100', '00100', '00100', '01110'],
+  2: ['01110', '10001', '00001', '00010', '00100', '01000', '11111'],
+  3: ['11110', '00001', '00001', '01110', '00001', '00001', '11110'],
+  4: ['00010', '00110', '01010', '10010', '11111', '00010', '00010'],
+  5: ['11111', '10000', '11110', '00001', '00001', '10001', '01110'],
+  6: ['00110', '01000', '10000', '11110', '10001', '10001', '01110'],
+  7: ['11111', '00001', '00010', '00100', '01000', '01000', '01000'],
+  8: ['01110', '10001', '10001', '01110', '10001', '10001', '01110'],
+  9: ['01110', '10001', '10001', '01111', '00001', '00010', '01100'],
+};
+
+// colorAt(列, 行) で 1 ドットごとの色を決める。黒い 1 ドットのふち付き。
+// ブラウザの拡大に頼るとぼやける端末があるので、表示サイズ×画素密度に合わせた
+// 大きさ（1 ドット = cell px）で描く
+function drawPixelNumber(cv, text, colorAt, cssHeight) {
+  text = String(text);
+  const cell = Math.max(1, Math.ceil(cssHeight * (window.devicePixelRatio || 1) / 9));
+  const w = (text.length * 6 + 1) * cell, h = 9 * cell;
+  if (cv.width !== w) cv.width = w;
+  if (cv.height !== h) cv.height = h;
+  const c = cv.getContext('2d');
+  c.setTransform(cell, 0, 0, cell, 0, 0);
+  c.clearRect(0, 0, w, h);
+  const on = (fn) => {
+    for (let i = 0; i < text.length; i++) {
+      const g = DIGITS[text[i]];
+      if (!g) continue;
+      for (let r = 0; r < 7; r++) for (let k = 0; k < 5; k++) if (g[r][k] === '1') fn(1 + i * 6 + k, 1 + r);
+    }
+  };
+  c.fillStyle = '#000';
+  on((x, y) => c.fillRect(x - 1, y - 1, 3, 3));
+  on((x, y) => { c.fillStyle = colorAt(x, y); c.fillRect(x, y, 1, 1); });
+}
+
+const rainbowAt = speed => (x, y) => prismCss(x * 14 + y * 4 - time * speed);
+
+// ---------- コンボ表示 ----------
+// フィーバー中にコンボの数字が移動する候補の場所（画面に対する %）。
+// 右上のスコアと下のノーツレーンの近くは最初から外し、移動のたびに
+// 「今見えている階段と主人公から一番離れた場所」を選ぶ
+const COMBO_SPOTS = [];
+for (const y of [12, 21, 30, 39, 46]) {
+  for (const x of [22, 36, 50, 64, 78]) {
+    if (x >= 64 && y <= 21) continue; // 右上のスコアの近くは使わない
+    COMBO_SPOTS.push([x, y]);
+  }
+}
+const COMBO_MIN = 40, COMBO_MAX = 64; // 左上の数字の高さ（px）
+let comboSpot = -1, feverBeats = 0;
+
+function comboSize() {
+  if (fever) return COMBO_MAX;
+  const k = Math.min(1, Math.max(0, combo - 2) / (FEVER_AT - 3));
+  return Math.round(COMBO_MIN + (COMBO_MAX - COMBO_MIN) * k);
+}
+
+// 候補の場所に数字を置いたときの四角（ゲーム内 px）と、見えている階段・主人公との距離の最小値。
+// 重なっていれば 0 以下になる
+function spotClearance([px, py]) {
+  const { w, h } = bgComboSize();
+  const hw = w / 2 + 2, hh = h / 2 + 2;
+  const cx = px / 100 * W, cy = py / 100 * H;
+  const dist = (x, y) => Math.hypot(Math.max(0, Math.abs(x - cx) - hw), Math.max(0, Math.abs(y - cy) - hh));
+  let best = Infinity;
+  for (let i = Math.max(0, player.idx - 4); i <= player.idx + 18 && i < steps.length; i++) {
+    const s = steps[i];
+    // 段の左右の端と真ん中を調べる
+    for (const ox of [-STEP_W / 2, 0, STEP_W / 2]) best = Math.min(best, dist(sx(s.x) + ox, sy(s.y) + 2));
+  }
+  return Math.min(best, dist(sx(player.x), sy(player.y) - 5));
+}
+
+function moveCombo() {
+  const scored = COMBO_SPOTS.map((sp, i) => ({ i, d: i === comboSpot ? -1 : spotClearance(sp) }));
+  const top = Math.max(...scored.map(o => o.d));
+  // 一番広い場所に近いものの中からランダムに選ぶ（毎回同じ場所にならないように）
+  const good = scored.filter(o => o.d >= top * 0.85 && o.d >= 0);
+  const i = good[(Math.random() * good.length) | 0].i;
+  comboSpot = i;
+  bgCombo.tx = COMBO_SPOTS[i][0] / 100 * W;
+  bgCombo.ty = COMBO_SPOTS[i][1] / 100 * H;
+}
+
+// ---- フィーバー中のコンボ：ゲーム画面の中、背景のすぐ上（階段・キャラより奥）に描く ----
+const BG_COMBO_CELL = 3;    // 1 ドットの大きさ（ゲーム内 px）
+const BG_COMBO_ALPHA = 0.55;
+const LETTERS = {
+  C: ['111', '100', '100', '100', '111'],
+  O: ['111', '101', '101', '101', '111'],
+  M: ['10001', '11011', '10101', '10001', '10001'],
+  B: ['110', '101', '110', '101', '110'],
+};
+const bgCombo = { x: 0, y: 0, tx: 0, ty: 0, vx: 0, vy: 0 };
+
+// 数字＋「COMBO」の文字を合わせた大きさ（ゲーム内 px）
+function bgComboSize() {
+  const n = String(Math.max(combo, 10)).length;
+  return { w: (n * 6 - 1) * BG_COMBO_CELL, h: 7 * BG_COMBO_CELL + 8 };
+}
+
+// バネのように弾んで次の場所へ
+function updateBgCombo(dt) {
+  if (!fever) return;
+  const k = 170, c = 13;
+  bgCombo.vx += (k * (bgCombo.tx - bgCombo.x) - c * bgCombo.vx) * dt;
+  bgCombo.vy += (k * (bgCombo.ty - bgCombo.y) - c * bgCombo.vy) * dt;
+  bgCombo.x += bgCombo.vx * dt;
+  bgCombo.y += bgCombo.vy * dt;
+}
+
+function drawBgCombo() {
+  if (!fever || combo < 2) return;
+  const text = String(combo);
+  const cell = BG_COMBO_CELL;
+  const { w, h } = bgComboSize();
+  const tw = (text.length * 6 - 1) * cell;
+  // 拍ごとに跳ねて、左右に少し揺れる
+  const hop = Math.round(beatPulse * 4);
+  const wig = beatPulse > 0.3 ? (feverBeats % 2 ? -1 : 1) : 0;
+  const x0 = Math.round(bgCombo.x - tw / 2) + wig;
+  const y0 = Math.round(bgCombo.y - h / 2) - hop;
+  const dots = fn => {
+    for (let i = 0; i < text.length; i++) {
+      const g = DIGITS[text[i]];
+      for (let r = 0; r < 7; r++) for (let k = 0; k < 5; k++) if (g[r][k] === '1') fn(x0 + (i * 6 + k) * cell, y0 + r * cell, i * 6 + k, r);
+    }
+  };
+  ctx.globalAlpha = BG_COMBO_ALPHA;
+  ctx.fillStyle = '#000';
+  dots((x, y) => ctx.fillRect(x - 1, y - 1, cell + 2, cell + 2));
+  dots((x, y, col, row) => { ctx.fillStyle = prismCss(col * 14 + row * 4 - time * 260); ctx.fillRect(x, y, cell, cell); });
+  // 下に小さく「COMBO」
+  const word = 'COMBO';
+  const lw = [...word].reduce((a, ch) => a + LETTERS[ch][0].length + 1, -1);
+  let lx = Math.round(bgCombo.x - lw / 2) + wig;
+  const ly = y0 + 7 * cell + 3;
+  ctx.fillStyle = INK_CSS;
+  for (const ch of word) {
+    const g = LETTERS[ch];
+    for (let r = 0; r < 5; r++) for (let k = 0; k < g[r].length; k++) if (g[r][k] === '1') ctx.fillRect(lx + k, ly + r, 1, 1);
+    lx += g[0].length + 1;
+  }
+  ctx.globalAlpha = 1;
+}
+
+// コンボが切れたらアニメーションなしで一瞬で左上に戻す
+function comboHome() {
+  comboEl.classList.add('snap');
+  comboEl.classList.remove('inbg');
+  comboSpot = -1;
+  comboEl.style.setProperty('--cs', `${COMBO_MIN}px`);
+  void comboEl.offsetWidth;
+  comboEl.classList.remove('snap');
+}
+
 function enterFever() {
   fever = true;
+  feverBeats = 0;
+  // 左上の数字の位置から飛び出して、空いている場所へ
+  Object.assign(bgCombo, { x: 18, y: H * 0.1, vx: 0, vy: 0 });
+  moveCombo();
+  comboEl.classList.add('inbg');
   flash = 1;
   shake += 10;
   zoom = 1;
@@ -480,6 +647,7 @@ function breakCombo(label) {
   if (combo > 0 || wasFever) showJudge(label, 'miss');
   combo = 0;
   lastHitBeat = -1;
+  comboHome();
   if (wasFever) {
     // 一気に通常モードへ戻す
     fever = false;
@@ -532,6 +700,13 @@ function die(reason, side) {
 // ---------- 結果発表 ----------
 const overEl = document.getElementById('over');
 const finalScoreEl = document.getElementById('finalScore');
+let finalScoreText = '0';
+const FINAL_SCORE_PX = 88; // index.html の #finalScore の高さと合わせる
+
+function setFinalScore(v) {
+  finalScoreText = String(v);
+  drawPixelNumber(finalScoreEl, finalScoreText, rainbowAt(200), FINAL_SCORE_PX);
+}
 
 function showResult() {
   result.shown = true;
@@ -540,7 +715,7 @@ function showResult() {
   document.getElementById('bestScore').textContent = best;
   document.getElementById('newBest').hidden = true;
   document.getElementById('toTitle').hidden = true;
-  finalScoreEl.textContent = '0';
+  setFinalScore(0);
   document.getElementById('rays').classList.remove('on');
   finalScoreEl.className = '';
   overEl.hidden = false;
@@ -560,7 +735,7 @@ function updateResult(dt) {
   const v = Math.round(score * (1 - Math.pow(1 - k, 3)));
   if (v !== result.shownScore) {
     result.shownScore = v;
-    finalScoreEl.textContent = v;
+    setFinalScore(v);
     retrigger(finalScoreEl, 'tick');
     Music.sfx('count', v);
   }
@@ -570,7 +745,7 @@ function updateResult(dt) {
 function finishCount() {
   result.done = true;
   result.doneAt = 0;
-  finalScoreEl.textContent = score;
+  setFinalScore(score);
   finalScoreEl.classList.remove('tick');
   retrigger(finalScoreEl, 'land');
   document.getElementById('rays').classList.add('on');
@@ -798,7 +973,11 @@ const flagEl = document.getElementById('flag');
 const maxComboEl = document.getElementById('maxCombo');
 const energyEl = document.querySelector('#energy > i');
 const comboEl = document.getElementById('combo');
-const comboNumEl = comboEl.querySelector('b');
+const comboNumEl = document.getElementById('comboNum');
+
+function drawComboNumber() {
+  drawPixelNumber(comboNumEl, combo, fever ? rainbowAt(260) : () => INK_CSS, comboSize());
+}
 const judgeEl = document.getElementById('judge');
 const bannerEl = document.getElementById('banner');
 const countEl = document.getElementById('count');
@@ -815,8 +994,9 @@ function updatePowerHud() {
 function updateHud() {
   flagEl.textContent = score;
   maxComboEl.textContent = `MAX ${maxCombo}`;
-  comboNumEl.textContent = combo;
+  drawComboNumber();
   comboEl.hidden = combo < 2;
+  comboEl.style.setProperty('--cs', `${comboSize()}px`);
   retrigger(comboEl, 'bump');
 }
 
@@ -901,6 +1081,9 @@ function onBeat() {
     shake += 2.5 + level * 1.2;
     zoom = 1;
     beatConfetti();
+    // コンボの数字：拍ごとに踊り、4 拍ごとに別の場所へ
+    feverBeats++;
+    if (feverBeats % 4 === 0) moveCombo();
   }
   if (state === 'play') {
     enemiesOnBeat();
@@ -970,6 +1153,7 @@ function update(dt) {
   }
 
   if (state === 'play') updateEnemies(dt);
+  updateBgCombo(dt);
   updateItems(dt);
 
   // 幽霊
@@ -1388,6 +1572,7 @@ function render() {
   drawParticles();
   dither();
   // ここから下はディザをかけずに色付きで描く
+  drawBgCombo(); // フィーバー中のコンボは階段・キャラより奥
   drawStairsSolid();
   drawItems();
   drawEnemies();
@@ -1400,6 +1585,8 @@ function render() {
     ctx.fillRect(0, 0, W, H);
   }
   drawNotes();
+  // 虹色のドット数字は毎フレーム描き直して色を流す
+  if (result && result.shown) drawPixelNumber(finalScoreEl, finalScoreText, rainbowAt(200), FINAL_SCORE_PX);
 }
 
 // ---------- ループ ----------

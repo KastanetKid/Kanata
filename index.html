@@ -66,20 +66,26 @@
   @keyframes blink { to { visibility: hidden; } }
   #combo {
     position: fixed; top: calc(env(safe-area-inset-top) + 12px); left: 14px;
-    display: flex; flex-direction: column; line-height: 1; pointer-events: none;
+    line-height: 1; pointer-events: none;
     font-variant-numeric: tabular-nums; text-shadow: 0 0 4px #000;
+    --cs: 40px; /* 数字の大きさ（コンボが増えるほど JS で大きくする） */
   }
   #combo[hidden] { display: none; }
-  #combo b { font-size: 40px; }
+  #combo .cwrap { display: flex; flex-direction: column; }
+  /* 数字はドット文字をキャンバスに描いて拡大表示する */
+  canvas.pix { display: block; width: auto; image-rendering: pixelated; image-rendering: crisp-edges; }
+  #combo canvas { height: var(--cs); transition: height .15s ease-out; }
   #combo span { font-size: 11px; letter-spacing: 3px; }
-  #combo.bump b { animation: bump .18s ease-out; }
+  /* フィーバー中はゲーム画面の中（階段・キャラより奥）に描くので、こちらは隠す */
+  #combo.inbg { visibility: hidden; }
+  #combo.snap canvas { transition: none; }
+  #combo.bump canvas { animation: bump .18s ease-out; }
   @keyframes bump { from { transform: scale(1.35); } to { transform: scale(1); } }
-  body.fever #combo b, body.fever #banner {
+  body.fever #banner {
     background: linear-gradient(90deg, #ff3b6b, #ffd23b, #3bffb0, #3bb8ff, #b43bff, #ff3b6b);
     background-size: 200% 100%; -webkit-background-clip: text; background-clip: text;
     color: transparent; text-shadow: none; animation: prism .6s linear infinite;
   }
-  body.fever #combo.bump b { animation: prism .6s linear infinite, bump .18s ease-out; }
   @keyframes prism { to { background-position: 200% 0; } }
   #judge {
     position: fixed; left: 0; right: 0; top: 40%; text-align: center;
@@ -113,7 +119,7 @@
     100% { opacity: 0; transform: translateY(40px); }
   }
   @media (prefers-reduced-motion: reduce) {
-    #combo.bump b, #banner.show, #banner[data-kind="down"].show { animation: none; }
+    #combo.bump canvas, #banner.show, #banner[data-kind="down"].show { animation: none; }
     #banner.show { opacity: 1; }
   }
   #hint { position: fixed; inset: 0; pointer-events: none; font-size: 12px; opacity: .7; }
@@ -150,14 +156,11 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   @keyframes raysIn { from { opacity: 0; } to { opacity: 1; } }
   #finalScore {
-    display: inline-block; font-size: 84px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums;
-    background: linear-gradient(90deg, #ff3b6b, #ffd23b, #3bffb0, #3bb8ff, #b43bff, #ff3b6b);
-    background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent;
-    text-shadow: none; filter: drop-shadow(0 0 6px rgba(255, 210, 59, .7)) drop-shadow(0 0 2px #000);
-    animation: prism 1.2s linear infinite;
+    height: 88px; margin: 0 auto; max-width: 100%;
+    filter: drop-shadow(0 0 6px rgba(255, 210, 59, .7)) drop-shadow(0 0 2px #000);
   }
-  #finalScore.tick { animation: prism 1.2s linear infinite, tick .12s ease-out; }
-  #finalScore.land { animation: prism 1.2s linear infinite, land .6s cubic-bezier(.2, 1.6, .4, 1); }
+  #finalScore.tick { animation: tick .12s ease-out; }
+  #finalScore.land { animation: land .6s cubic-bezier(.2, 1.6, .4, 1); }
   @keyframes tick { from { transform: scale(1.08); } to { transform: scale(1); } }
   @keyframes land {
     0% { transform: scale(2) rotate(-6deg); filter: drop-shadow(0 0 24px #fff) drop-shadow(0 0 2px #000); }
@@ -186,7 +189,7 @@
   <div id="pShoe" class="power" hidden><b>×2 COMBO</b><i></i></div>
 </div>
 
-<div id="combo" hidden><b>0</b><span>COMBO</span></div>
+<div id="combo" hidden><div class="cwrap"><canvas class="pix" id="comboNum" width="13" height="9"></canvas><span>COMBO</span></div></div>
 <div id="judge"></div>
 <div id="banner"></div>
 <div id="count"></div>
@@ -203,7 +206,7 @@
 <div id="over" class="overlay" hidden>
   <p id="overTitle">FELL</p>
   <p class="label">SCORE</p>
-  <div class="scoreWrap"><div id="rays"></div><h1 id="finalScore">0</h1></div>
+  <div class="scoreWrap"><div id="rays"></div><canvas class="pix" id="finalScore" width="7" height="9"></canvas></div>
   <p id="newBest" hidden>NEW BEST!</p>
   <p>MAX COMBO <b id="finalCombo">0</b><br>BEST <b id="bestScore">0</b></p>
   <p id="toTitle" class="blink" hidden>TAP TO TITLE</p>
