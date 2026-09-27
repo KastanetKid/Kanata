@@ -541,6 +541,8 @@ function showResult() {
   document.getElementById('newBest').hidden = true;
   document.getElementById('toTitle').hidden = true;
   finalScoreEl.textContent = '0';
+  document.getElementById('rays').classList.remove('on');
+  finalScoreEl.className = '';
   overEl.hidden = false;
   retrigger(overEl, 'enter');
 }
@@ -559,6 +561,7 @@ function updateResult(dt) {
   if (v !== result.shownScore) {
     result.shownScore = v;
     finalScoreEl.textContent = v;
+    retrigger(finalScoreEl, 'tick');
     Music.sfx('count', v);
   }
   if (k >= 1) finishCount();
@@ -568,12 +571,18 @@ function finishCount() {
   result.done = true;
   result.doneAt = 0;
   finalScoreEl.textContent = score;
+  finalScoreEl.classList.remove('tick');
   retrigger(finalScoreEl, 'land');
-  shake += 4;
+  document.getElementById('rays').classList.add('on');
+  // スコア確定の瞬間：閃光・揺れ・紙吹雪・ファンファーレ
+  flash = 0.7;
+  shake += 10;
+  burstConfetti(45);
+  Music.sfx('fanfare');
+  vibrate([20, 30, 40]);
   if (result.isBest) {
     document.getElementById('newBest').hidden = false;
-    Music.sfx('fanfare');
-    burstConfetti(50);
+    setTimeout(() => { burstConfetti(70); Music.sfx('fanfare'); shake += 6; }, 350);
   }
   document.getElementById('toTitle').hidden = false;
 }

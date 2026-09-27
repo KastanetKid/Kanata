@@ -52,6 +52,16 @@
   .overlay > * { background: var(--bg); padding: 4px 10px; }
   .overlay h1 { margin: 0; font-size: 30px; letter-spacing: 4px; }
   .overlay p { margin: 0; font-size: 14px; line-height: 1.7; }
+  /* タイトルの説明文：暗い板を少し広げ、文字にほんのり光彩をつけて読みやすく */
+  #title > * {
+    background: rgba(11, 11, 13, .9); padding: 6px 14px; border-radius: 3px;
+    box-shadow: 0 0 0 1px rgba(242, 239, 230, .1), 0 0 14px 4px rgba(11, 11, 13, .9);
+  }
+  #title p {
+    font-size: 15px; font-weight: 600; letter-spacing: .04em; line-height: 1.8;
+    text-shadow: 0 0 1px #fff, 0 0 6px rgba(242, 239, 230, .45), 0 0 2px #000;
+  }
+  #title h1 { text-shadow: 0 0 2px #fff, 0 0 12px rgba(242, 239, 230, .6), 0 0 3px #000; }
   .blink { animation: blink 1.1s steps(2, start) infinite; }
   @keyframes blink { to { visibility: hidden; } }
   #combo {
@@ -128,10 +138,39 @@
   }
   #over .label { font-size: 12px; letter-spacing: 6px; opacity: .8; }
   #over #overTitle { font-size: 13px; letter-spacing: 4px; color: #9a9a9a; }
-  #finalScore { font-size: 72px; line-height: 1; font-variant-numeric: tabular-nums; }
-  #finalScore.land { animation: land .35s ease-out; }
-  @keyframes land { 0% { transform: scale(1.5); } 60% { transform: scale(.94); } 100% { transform: scale(1); } }
-  #newBest { color: #ffd23b; font-weight: 800; letter-spacing: 3px; font-size: 18px; }
+  /* 結果のスコア：虹色のグラデーション文字＋金色の光、後ろで光の筋が回る */
+  #over .scoreWrap { position: relative; background: none; padding: 10px 0; isolation: isolate; }
+  #rays {
+    position: absolute; left: 50%; top: 50%; width: 360px; height: 360px; margin: -180px 0 0 -180px;
+    border-radius: 50%; z-index: -1; opacity: 0; pointer-events: none;
+    background: repeating-conic-gradient(rgba(255, 210, 59, .28) 0 8deg, transparent 8deg 20deg);
+    -webkit-mask: radial-gradient(circle, #000 20%, transparent 68%); mask: radial-gradient(circle, #000 20%, transparent 68%);
+  }
+  #rays.on { opacity: 1; animation: spin 9s linear infinite, raysIn .5s ease-out; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes raysIn { from { opacity: 0; } to { opacity: 1; } }
+  #finalScore {
+    display: inline-block; font-size: 84px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums;
+    background: linear-gradient(90deg, #ff3b6b, #ffd23b, #3bffb0, #3bb8ff, #b43bff, #ff3b6b);
+    background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent;
+    text-shadow: none; filter: drop-shadow(0 0 6px rgba(255, 210, 59, .7)) drop-shadow(0 0 2px #000);
+    animation: prism 1.2s linear infinite;
+  }
+  #finalScore.tick { animation: prism 1.2s linear infinite, tick .12s ease-out; }
+  #finalScore.land { animation: prism 1.2s linear infinite, land .6s cubic-bezier(.2, 1.6, .4, 1); }
+  @keyframes tick { from { transform: scale(1.08); } to { transform: scale(1); } }
+  @keyframes land {
+    0% { transform: scale(2) rotate(-6deg); filter: drop-shadow(0 0 24px #fff) drop-shadow(0 0 2px #000); }
+    100% { transform: scale(1) rotate(0); }
+  }
+  #newBest {
+    color: #ffd23b; font-weight: 800; letter-spacing: 3px; font-size: 20px;
+    text-shadow: 0 0 8px rgba(255, 210, 59, .8), 0 0 2px #000; animation: bestPulse .5s ease-in-out infinite alternate;
+  }
+  @keyframes bestPulse { to { transform: scale(1.1); } }
+  @media (prefers-reduced-motion: reduce) {
+    #rays.on, #finalScore, #finalScore.tick, #finalScore.land, #newBest { animation: none; }
+  }
   #over.enter { animation: fadeIn .4s ease-out; }
   @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 </style>
@@ -164,7 +203,7 @@
 <div id="over" class="overlay" hidden>
   <p id="overTitle">FELL</p>
   <p class="label">SCORE</p>
-  <h1 id="finalScore">0</h1>
+  <div class="scoreWrap"><div id="rays"></div><h1 id="finalScore">0</h1></div>
   <p id="newBest" hidden>NEW BEST!</p>
   <p>MAX COMBO <b id="finalCombo">0</b><br>BEST <b id="bestScore">0</b></p>
   <p id="toTitle" class="blink" hidden>TAP TO TITLE</p>
