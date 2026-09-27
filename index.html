@@ -33,8 +33,6 @@
     clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, 10px 50%);
   }
   #energy { width: 72px; height: 4px; border: 1px solid var(--ink); }
-  #hearts { font-size: 16px; letter-spacing: 2px; color: #ff3355; text-shadow: 0 0 3px #000; }
-  #hearts .lost { color: #444; }
   #energy > i { display: block; height: 100%; width: 100%; background: var(--ink); }
   .overlay {
     position: fixed; inset: 0; display: flex; flex-direction: column;
@@ -135,7 +133,6 @@
 <div id="hud">
   <div id="flag">0</div>
   <div id="energy"><i></i></div>
-  <div id="hearts"></div>
 </div>
 
 <div id="combo" hidden><b>0</b><span>COMBO</span></div>
@@ -147,7 +144,7 @@
   <h1>ENDLESS<br>STAIR</h1>
   <p>BGMのビートに合わせて<br>次の段がある側をタップ</p>
   <p>下のノーツが中央で重なる瞬間がビート<br>前の段がある側をタップすると一段下る</p>
-  <p>20コンボで FEVER!!<br><span style="color:#b84dff">■</span> <span style="color:#ff3355">▲</span> 色付きの敵に3回当たるとアウト</p>
+  <p>20コンボで FEVER!!<br><span style="color:#b84dff">■</span> <span style="color:#ff3355">▲</span> 色付きの敵に当たると一発アウト</p>
   <p class="blink">TAP TO START</p>
   <p>♪ 音を出して遊んでね</p>
 </div>

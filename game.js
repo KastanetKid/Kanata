@@ -44,34 +44,40 @@ const TEMPO_UP_BPM = 140;
 const LANE_Y = 0.78;
 const NOTE_BEATS = 2; // ノーツが端から中央まで何拍かけて飛んでくるか
 
-const MAX_HP = 3;
 const ENEMY_START = 8; // この段数を越えたら敵が出始める
 
 const RED = '#ff3355';
 const PURPLE = '#b84dff';
+// 主人公の色（白い階段・赤紫の敵のどれとも違う金色）
+const GOLD = '#ffc233';
+// 階段の色：踏み面は常に白、蹴込みは通常時グレー／フィーバー時は段ごとの色
+const TREAD = INK_CSS;
+const RISER = '#6b6760';
+const RAIL = '#b9b5aa';
 
 // ---------- スプライト ----------
+// 主人公：w = 白（頭）、o = 金色（体）、k = 黒（目）
 const HERO = [
-  '..###..',
-  '.#####.',
-  '.##.#..',
-  '..###..',
-  '.#####.',
-  '#.###.#',
-  '..###..',
-  '..#.#..',
-  '.##.##.',
+  '..www..',
+  '.wwwww.',
+  '.wwkw..',
+  '..www..',
+  '.ooooo.',
+  'o.ooo.o',
+  '..ooo..',
+  '..o.o..',
+  '.oo.oo.',
 ];
 const HERO_STEP = [
-  '..###..',
-  '.#####.',
-  '.##.#..',
-  '..###..',
-  '#.###..',
-  '.#####.',
-  '..###.#',
-  '.#...#.',
-  '##....#',
+  '..www..',
+  '.wwwww.',
+  '.wwkw..',
+  '..www..',
+  'o.ooo..',
+  '.ooooo.',
+  '..ooo.o',
+  '.o...o.',
+  'oo....o',
 ];
 const GHOST = [
   '..####..',
@@ -168,6 +174,8 @@ for (let i = 0; i < 256; i++) {
   };
   PRISM.push([k(0), k(4), k(2)]);
 }
+// フィーバー中の背景用に暗くしたプリズム（手前の階段とキャラを目立たせる）
+const PRISM_DIM = PRISM.map(c => c.map(v => Math.round(v * 0.55)));
 const prismCss = i => `rgb(${PRISM[i & 255].join(',')})`;
 const CONFETTI_COLORS = ['#ff3b6b', '#ffd23b', '#3bffb0', '#3bb8ff', '#b43bff', '#ffffff', '#ff8a3b'];
 
@@ -175,7 +183,7 @@ const CONFETTI_COLORS = ['#ff3b6b', '#ffd23b', '#3bffb0', '#3bb8ff', '#b43bff', 
 let state = 'title'; // title | play | dead
 let steps, player, cam, energy, score, ghosts, particles, deadTimer, time, started;
 let combo, maxCombo, fever, lastHitBeat, lastHitTime;
-let hp, invincible, enemies, hitBeats, laneFx, tempoUp;
+let enemies, hitBeats, laneFx, tempoUp;
 let result = null; // 結果発表の進行状況
 let countdown = null; // 3・2・1・START! の進行状況
 let startBeat = -1;   // この拍からノーツが流れ、操作できる
@@ -219,8 +227,6 @@ function reset() {
   fever = false;
   lastHitBeat = -1;
   lastHitTime = 0;
-  hp = MAX_HP;
-  invincible = 0;
   tempoUp = false;
   result = null;
   countdown = null;
@@ -425,17 +431,14 @@ function breakCombo(label) {
   updateHud();
 }
 
+// 敵に当たったら一発アウト
 function hurt() {
-  if (invincible > 0 || player.falling) return;
-  hp--;
-  invincible = 1.6;
+  if (player.falling) return;
   redFlash = 1;
   shake += 9;
   Music.sfx('hurt');
   vibrate([60, 30, 60]);
-  breakCombo('HIT!');
-  updateHud();
-  if (hp <= 0) die('K.O.', -player.dir);
+  die('K.O.', -player.dir);
 }
 
 function die(reason, side) {
@@ -577,7 +580,6 @@ function updateEnemies(dt) {
 // ---------- HUD ----------
 const flagEl = document.getElementById('flag');
 const energyEl = document.querySelector('#energy > i');
-const heartsEl = document.getElementById('hearts');
 const comboEl = document.getElementById('combo');
 const comboNumEl = comboEl.querySelector('b');
 const judgeEl = document.getElementById('judge');
@@ -589,7 +591,6 @@ function updateHud() {
   comboNumEl.textContent = combo;
   comboEl.hidden = combo < 2;
   retrigger(comboEl, 'bump');
-  heartsEl.innerHTML = '<span>♥</span>'.repeat(Math.max(0, hp)) + '<span class="lost">♥</span>'.repeat(MAX_HP - Math.max(0, hp));
 }
 
 function retrigger(el, cls) {
@@ -710,7 +711,6 @@ function update(dt) {
     }
   }
   energyEl.style.width = `${Math.max(0, energy) * 100}%`;
-  invincible = Math.max(0, invincible - dt);
 
   if (state === 'dead') {
     deadTimer += dt;
@@ -836,46 +836,63 @@ function fadeFor(i) {
   return 1;
 }
 
-function drawStairs() {
-  const from = Math.max(0, player.idx - 18);
-  const to = Math.min(steps.length - 1, player.idx + 28);
+function stairRange() {
+  return [Math.max(0, player.idx - 18), Math.min(steps.length - 1, player.idx + 28)];
+}
 
-  // 手すり（段の外側をつなぐ線）
-  ctx.lineWidth = 1;
-  for (let i = to; i > from; i--) {
-    const a = steps[i - 1], b = steps[i];
-    const f = fadeFor(i);
-    ctx.strokeStyle = gray(0.8 * f);
-    const edge = -b.dir * (STEP_W / 2 - 1);
-    ctx.beginPath();
-    ctx.moveTo(sx(a.x - a.dir * (STEP_W / 2 - 1)) + 0.5, sy(a.y) - 6.5);
-    ctx.lineTo(sx(b.x + edge) + 0.5, sy(b.y) - 6.5);
-    ctx.stroke();
-  }
-
+// 階段の下の支柱：ディザをかけてドットの塊として背景になじませる
+function drawStairSupports() {
+  const [from, to] = stairRange();
   for (let i = to; i >= from; i--) {
     const s = steps[i];
     const f = fadeFor(i);
     const x = sx(s.x) - STEP_W / 2;
     const y = sy(s.y);
     if (y < -20 || y > H + 40) continue;
-
-    // 下の支柱（ドットの塊になる）
-    ctx.fillStyle = gray(0.2 * f);
+    ctx.fillStyle = gray(0.17 * f);
     ctx.fillRect(x + 1, y + 7, STEP_W - 2, 18);
-    ctx.fillStyle = gray(0.1 * f);
+    ctx.fillStyle = gray(0.08 * f);
     ctx.fillRect(x + 2, y + 25, STEP_W - 4, 16);
+  }
+}
+
+// 踏み面・蹴込み・手すり：ディザ後にベタ塗り＋黒ふちで描き、どのモードでもくっきり見せる
+function drawStairsSolid() {
+  const [from, to] = stairRange();
+
+  ctx.lineWidth = 1;
+  for (let i = to; i > from; i--) {
+    const a = steps[i - 1], b = steps[i];
+    ctx.globalAlpha = fadeFor(i);
+    const x1 = sx(a.x - a.dir * (STEP_W / 2 - 1)) + 0.5, y1 = sy(a.y) - 6.5;
+    const x2 = sx(b.x - b.dir * (STEP_W / 2 - 1)) + 0.5, y2 = sy(b.y) - 6.5;
+    ctx.strokeStyle = '#000';
+    ctx.beginPath(); ctx.moveTo(x1, y1 + 1); ctx.lineTo(x2, y2 + 1); ctx.stroke();
+    ctx.strokeStyle = RAIL;
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+  }
+
+  for (let i = to; i >= from; i--) {
+    const s = steps[i];
+    const x = sx(s.x) - STEP_W / 2;
+    const y = sy(s.y);
+    if (y < -20 || y > H + 40) continue;
+    ctx.globalAlpha = fadeFor(i);
+    // 黒ふち
+    ctx.fillStyle = '#000';
+    ctx.fillRect(x - 1, y - 1, STEP_W + 2, 9);
     // 蹴込み
-    ctx.fillStyle = gray(0.55 * f);
+    ctx.fillStyle = fever ? `hsl(${(i * 28 + time * 90) % 360}, 80%, 45%)` : RISER;
     ctx.fillRect(x, y + 2, STEP_W, 5);
     // 踏み面
-    ctx.fillStyle = gray(0.97 * f);
+    ctx.fillStyle = TREAD;
     ctx.fillRect(x, y, STEP_W, 2);
     // 手すりの支柱
-    ctx.fillStyle = gray(0.8 * f);
+    ctx.fillStyle = RAIL;
     const px = s.dir > 0 ? x + 1 : x + STEP_W - 2;
     ctx.fillRect(px, y - 6, 1, 6);
   }
+  ctx.globalAlpha = 1;
 }
 
 function drawGhosts() {
@@ -887,10 +904,8 @@ function drawGhosts() {
 }
 
 function drawPlayer() {
-  // 被弾直後の無敵中は点滅
-  if (invincible > 0 && !player.falling && Math.floor(invincible * 12) % 2 === 0) return;
   const sprite = player.t < 1 || player.frame ? HERO_STEP : HERO;
-  drawSprite(sprite, sx(player.x) - 3, sy(player.y) - 9, player.dir < 0, 1, true);
+  drawColorSprite(sprite, sx(player.x) - 3, sy(player.y) - 9, GOLD, player.dir < 0);
 }
 
 function drawParticles() {
@@ -1024,11 +1039,11 @@ function dither() {
       const th = BAYER[row + (x & 3)];
       let c;
       if (lumBuf[p] > th) {
-        c = fever ? PRISM[(x * 3 + y * 2 + hueShift) & 255] : INK;
+        c = fever ? PRISM_DIM[(x * 3 + y * 2 + hueShift) & 255] : INK;
       } else if (fever && x > 1 && lumBuf[p - 2] > th) {
-        c = [150, 30, 120]; // 色ずれ（赤紫）
+        c = [90, 18, 72]; // 色ずれ（赤紫）
       } else if (fever && x < W - 2 && lumBuf[p + 2] > th) {
-        c = [20, 110, 160]; // 色ずれ（シアン）
+        c = [12, 66, 96]; // 色ずれ（シアン）
       } else {
         c = BG;
       }
@@ -1050,10 +1065,11 @@ function render() {
   ctx.globalAlpha = 1;
   drawBackground();
   drawGhosts();
-  drawStairs();
+  drawStairSupports();
   drawParticles();
   dither();
   // ここから下はディザをかけずに色付きで描く
+  drawStairsSolid();
   drawEnemies();
   drawPlayer();
   drawConfetti();
