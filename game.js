@@ -177,6 +177,8 @@ let steps, player, cam, energy, score, ghosts, particles, deadTimer, time, start
 let combo, maxCombo, fever, lastHitBeat, lastHitTime;
 let hp, invincible, enemies, hitBeats, laneFx, tempoUp;
 let result = null; // 結果発表の進行状況
+let countdown = null; // 3・2・1・START! の進行状況
+let startBeat = -1;   // この拍からノーツが流れ、操作できる
 let confetti = [];
 let shake = 0, zoom = 0, flash = 0, dark = 0, redFlash = 0, beatPulse = 0, prevBeat = null, cannonSide = 1;
 let best = 0;
@@ -221,6 +223,8 @@ function reset() {
   invincible = 0;
   tempoUp = false;
   result = null;
+  countdown = null;
+  startBeat = -1;
   if (Music.ready) Music.setTempo(Music.BASE_BPM);
   document.body.classList.remove('fever');
   updateHud();
@@ -231,10 +235,11 @@ function onPress(action) {
   if (!Music.ready) Music.init();
   Music.start();
   if (state === 'title') {
-    state = 'play';
     document.getElementById('title').hidden = true;
+    startCountdown();
     return;
   }
+  if (state === 'count') return;
   if (state === 'dead') {
     if (!result) return;
     if (!result.done) finishCount();
@@ -242,6 +247,37 @@ function onPress(action) {
     return;
   }
   move(action);
+}
+
+// 次の小節の頭から 3・2・1・START! を拍に合わせて出す。START! の拍からプレイ開始
+function startCountdown() {
+  Music.resync();
+  state = 'count';
+  const now = Music.now();
+  const list = Music.beatList(12);
+  let i = list.findIndex(b => b.time > now + 0.25 && b.index % 4 === 0);
+  if (i < 0 || i + 3 >= list.length) i = list.findIndex(b => b.time > now + 0.25);
+  const bs = list.slice(i, i + 4);
+  countdown = { items: bs.map((b, k) => ({ time: b.time, label: ['3', '2', '1', 'START!'][k] })), next: 0 };
+  startBeat = bs[bs.length - 1].index;
+  bs.forEach((b, k) => Music.sfxAt(k === bs.length - 1 ? 'go' : 'tick', b.time));
+}
+
+function updateCountdown() {
+  if (!countdown) return;
+  const now = Music.now();
+  const items = countdown.items;
+  while (countdown.next < items.length && now >= items[countdown.next].time) {
+    const it = items[countdown.next++];
+    countEl.textContent = it.label;
+    countEl.dataset.kind = it.label.length > 1 ? 'go' : 'num';
+    retrigger(countEl, 'pop');
+    beatPulse = 1;
+    shake += it.label.length > 1 ? 5 : 2;
+  }
+  // START! の拍の少し前から操作を受け付ける
+  if (state === 'count' && now >= items[items.length - 1].time - GOOD_WINDOW) state = 'play';
+  if (countdown.next >= items.length) countdown = null;
 }
 
 function backToTitle() {
@@ -546,6 +582,7 @@ const comboEl = document.getElementById('combo');
 const comboNumEl = comboEl.querySelector('b');
 const judgeEl = document.getElementById('judge');
 const bannerEl = document.getElementById('banner');
+const countEl = document.getElementById('count');
 
 function updateHud() {
   flagEl.textContent = score;
@@ -647,6 +684,8 @@ function onBeat() {
 
 function update(dt) {
   time += dt;
+  Music.tick();
+  updateCountdown();
 
   // 拍の検出
   if (Music.ready) {
@@ -907,7 +946,7 @@ function drawEnemies() {
 
 // ノーツレーン：左右から飛んでくるアイコンが中央のリングで重なる瞬間が拍
 function drawNotes() {
-  if (!Music.ready || state !== 'play') return;
+  if (!Music.ready || (state !== 'play' && state !== 'count')) return;
   const lb = Music.lastBeatTime();
   if (lb === null) return;
   const now = Music.now();
@@ -941,7 +980,7 @@ function drawNotes() {
   for (const b of Music.beatList(NOTE_BEATS + 2)) {
     const dt = b.time - now;
     if (dt > NOTE_BEATS * Music.BEAT || dt < -GOOD_WINDOW) continue;
-    if (hitBeats.has(b.index)) continue;
+    if (hitBeats.has(b.index) || b.index < startBeat) continue;
     const d = Math.round(Math.max(0, dt) / (NOTE_BEATS * Music.BEAT) * span);
     let color = INK_CSS;
     if (fever) color = prismCss(b.index * 40);

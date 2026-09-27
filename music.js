@@ -74,7 +74,6 @@ const Music = (() => {
     if (timer) return;
     nextTime = ac.currentTime + 0.1;
     step = 0;
-    latency = (ac.outputLatency || 0) + (ac.baseLatency || 0);
     timer = setInterval(schedule, 20);
     schedule();
   }
@@ -180,19 +179,45 @@ const Music = (() => {
   }
 
   // ---- 時刻・判定 ----
-  // ac.currentTime は数ミリ〜十数ミリ単位でカクカク進むので、
-  // performance.now() との差をなめらかに追いかけて「なめらかな音の時計」を作る
-  let latency = 0;
+  // 「今スピーカーから出ている音の時刻」を performance.now() 基準で表す。
+  // ずれ（offset）の推定は tick() で 1 フレームに 1 回だけなめらかに更新し、
+  // now() はその offset を使うだけにする（時刻が逆戻りしないようにもする）。
   let clockOffset = null;
+  let lastNow = -Infinity;
+
+  function rawOffset(perf) {
+    if (ac.getOutputTimestamp) {
+      const ts = ac.getOutputTimestamp();
+      // contextTime は出力遅延込みで「今鳴っている」時刻
+      if (ts && ts.contextTime > 0 && ts.performanceTime > 0) return ts.contextTime - ts.performanceTime / 1000;
+    }
+    const lat = (ac.outputLatency || 0) + (ac.baseLatency || 0);
+    return ac.currentTime - lat - perf;
+  }
+
+  function tick() {
+    if (!ac) return;
+    const perf = performance.now() / 1000;
+    const raw = rawOffset(perf);
+    if (clockOffset === null || Math.abs(raw - clockOffset) > 0.1) clockOffset = raw;
+    else clockOffset += (raw - clockOffset) * 0.05;
+  }
+
+  // 時計を測り直す（カウントダウン開始時など）
+  function resync() {
+    if (!ac) return;
+    clockOffset = null;
+    lastNow = -Infinity;
+    tick();
+  }
+
   function now() {
     if (!ac) return 0;
-    const perf = performance.now() / 1000;
-    const raw = ac.currentTime - perf;
-    if (clockOffset === null || Math.abs(raw - clockOffset) > 0.08) clockOffset = raw;
-    else clockOffset += (raw - clockOffset) * 0.02;
-    const lat = (ac.outputLatency || 0) + (ac.baseLatency || 0);
-    latency += (lat - latency) * 0.01;
-    return perf + clockOffset - latency;
+    if (clockOffset === null) tick();
+    let t = performance.now() / 1000 + clockOffset;
+    if (t < lastNow && lastNow - t < 0.1) t = lastNow;
+    lastNow = t;
+    return t;
   }
 
   // 記録済みの拍 + この先 ahead 拍分の予定（テンポ変更も考慮）
@@ -280,6 +305,18 @@ const Music = (() => {
     filter.frequency.exponentialRampToValueAtTime(on ? 500 : 18000, t + (on ? 0.3 : 0.15));
   }
 
+  // 拍の時刻（ac の時刻）ぴったりに鳴らす効果音
+  function sfxAt(kind, t) {
+    if (!ac) return;
+    t = Math.max(t, ac.currentTime);
+    if (kind === 'go') {
+      osc('square', mtof(96), t, 0.25, 0.07, master);
+      osc('square', mtof(91), t, 0.25, 0.05, master);
+    } else {
+      osc('square', mtof(84), t, 0.09, 0.07, master);
+    }
+  }
+
   function sfx(kind, n = 0) {
     if (!ac) return;
     const t = ac.currentTime;
@@ -310,7 +347,7 @@ const Music = (() => {
   }
 
   return {
-    BASE_BPM, init, start, now, beatList, nearestBeat, lastBeatTime, beatAfter, setTempo, setFever, setMuffled, sfx,
+    BASE_BPM, init, start, now, tick, resync, sfxAt, beatList, nearestBeat, lastBeatTime, beatAfter, setTempo, setFever, setMuffled, sfx,
     get BPM() { return bpm; },
     get BEAT() { return 60 / bpm; },
     get ready() { return !!ac; },
