@@ -293,7 +293,8 @@ function onPress(action) {
   }
   if (state === 'count') return;
   if (state === 'dead') {
-    if (!result) return;
+    // 結果が表示される前のタップは無視する（先に数え上げが終わって 0 のまま残るのを防ぐ）
+    if (!result || !result.shown) return;
     if (!result.done) finishCount();
     else if (result.doneAt > 0.35) backToTitle();
     return;
@@ -464,11 +465,55 @@ function descend() {
   updateHud();
 }
 
+// ---------- ドット数字 ----------
+// 5×7 のドット文字。キャンバスに 1 ドット＝1px で描き、CSS で拡大表示する
+const DIGITS = {
+  0: ['01110', '10001', '10011', '10101', '11001', '10001', '01110'],
+  1: ['00100', '01100', '00100', '00100', '00100', '00100', '01110'],
+  2: ['01110', '10001', '00001', '00010', '00100', '01000', '11111'],
+  3: ['11110', '00001', '00001', '01110', '00001', '00001', '11110'],
+  4: ['00010', '00110', '01010', '10010', '11111', '00010', '00010'],
+  5: ['11111', '10000', '11110', '00001', '00001', '10001', '01110'],
+  6: ['00110', '01000', '10000', '11110', '10001', '10001', '01110'],
+  7: ['11111', '00001', '00010', '00100', '01000', '01000', '01000'],
+  8: ['01110', '10001', '10001', '01110', '10001', '10001', '01110'],
+  9: ['01110', '10001', '10001', '01111', '00001', '00010', '01100'],
+};
+
+// colorAt(列, 行) で 1 ドットごとの色を決める。黒い 1 ドットのふち付き
+function drawPixelNumber(cv, text, colorAt) {
+  text = String(text);
+  const w = text.length * 6 + 1, h = 9;
+  if (cv.width !== w) cv.width = w;
+  if (cv.height !== h) cv.height = h;
+  const c = cv.getContext('2d');
+  c.clearRect(0, 0, w, h);
+  const on = (fn) => {
+    for (let i = 0; i < text.length; i++) {
+      const g = DIGITS[text[i]];
+      if (!g) continue;
+      for (let r = 0; r < 7; r++) for (let k = 0; k < 5; k++) if (g[r][k] === '1') fn(1 + i * 6 + k, 1 + r);
+    }
+  };
+  c.fillStyle = '#000';
+  on((x, y) => c.fillRect(x - 1, y - 1, 3, 3));
+  on((x, y) => { c.fillStyle = colorAt(x, y); c.fillRect(x, y, 1, 1); });
+}
+
+const rainbowAt = speed => (x, y) => prismCss(x * 14 + y * 4 - time * speed);
+
 // ---------- コンボ表示 ----------
-// フィーバー中にコンボの数字が移動する場所（画面に対する %）。
-// 真ん中の主人公・下のノーツレーン・右上のスコアは避ける
-const COMBO_SPOTS = [[24, 13], [50, 11], [74, 30], [18, 36], [82, 42], [50, 26], [22, 54], [78, 56]];
-const COMBO_MIN = 40, COMBO_MAX = 64, COMBO_FEVER = 58; // 数字の大きさ（px）
+// フィーバー中にコンボの数字が移動する候補の場所（画面に対する %）。
+// 右上のスコアと下のノーツレーンの近くは最初から外し、移動のたびに
+// 「今見えている階段と主人公から一番離れた場所」を選ぶ
+const COMBO_SPOTS = [];
+for (const y of [12, 21, 30, 39, 46]) {
+  for (const x of [22, 36, 50, 64, 78]) {
+    if (x >= 64 && y <= 21) continue; // 右上のスコアの近くは使わない
+    COMBO_SPOTS.push([x, y]);
+  }
+}
+const COMBO_MIN = 40, COMBO_MAX = 64, COMBO_FEVER = 100; // 数字の高さ（px）
 let comboSpot = -1, feverBeats = 0;
 
 function comboSize() {
@@ -477,9 +522,29 @@ function comboSize() {
   return Math.round(COMBO_MIN + (COMBO_MAX - COMBO_MIN) * k);
 }
 
+// 候補の場所に数字を置いたときの四角（ゲーム内 px）と、見えている階段・主人公との距離の最小値。
+// 重なっていれば 0 以下になる
+function spotClearance([px, py]) {
+  const k = W / window.innerWidth; // 画面 px → ゲーム内 px
+  const hw = (comboNumEl.width / comboNumEl.height * COMBO_FEVER) * k / 2 + 2;
+  const hh = (COMBO_FEVER + 18) * k / 2 + 2;
+  const cx = px / 100 * W, cy = py / 100 * H;
+  const dist = (x, y) => Math.hypot(Math.max(0, Math.abs(x - cx) - hw), Math.max(0, Math.abs(y - cy) - hh));
+  let best = Infinity;
+  for (let i = Math.max(0, player.idx - 4); i <= player.idx + 18 && i < steps.length; i++) {
+    const s = steps[i];
+    // 段の左右の端と真ん中を調べる
+    for (const ox of [-STEP_W / 2, 0, STEP_W / 2]) best = Math.min(best, dist(sx(s.x) + ox, sy(s.y) + 2));
+  }
+  return Math.min(best, dist(sx(player.x), sy(player.y) - 5));
+}
+
 function moveCombo() {
-  let i;
-  do { i = (Math.random() * COMBO_SPOTS.length) | 0; } while (i === comboSpot);
+  const scored = COMBO_SPOTS.map((sp, i) => ({ i, d: i === comboSpot ? -1 : spotClearance(sp) }));
+  const top = Math.max(...scored.map(o => o.d));
+  // 一番広い場所に近いものの中からランダムに選ぶ（毎回同じ場所にならないように）
+  const good = scored.filter(o => o.d >= top * 0.85 && o.d >= 0);
+  const i = good[(Math.random() * good.length) | 0].i;
   comboSpot = i;
   comboEl.style.setProperty('--rx', `${COMBO_SPOTS[i][0]}%`);
   comboEl.style.setProperty('--ry', `${COMBO_SPOTS[i][1]}%`);
@@ -574,6 +639,12 @@ function die(reason, side) {
 // ---------- 結果発表 ----------
 const overEl = document.getElementById('over');
 const finalScoreEl = document.getElementById('finalScore');
+let finalScoreText = '0';
+
+function setFinalScore(v) {
+  finalScoreText = String(v);
+  drawPixelNumber(finalScoreEl, finalScoreText, rainbowAt(200));
+}
 
 function showResult() {
   result.shown = true;
@@ -582,7 +653,7 @@ function showResult() {
   document.getElementById('bestScore').textContent = best;
   document.getElementById('newBest').hidden = true;
   document.getElementById('toTitle').hidden = true;
-  finalScoreEl.textContent = '0';
+  setFinalScore(0);
   document.getElementById('rays').classList.remove('on');
   finalScoreEl.className = '';
   overEl.hidden = false;
@@ -602,7 +673,7 @@ function updateResult(dt) {
   const v = Math.round(score * (1 - Math.pow(1 - k, 3)));
   if (v !== result.shownScore) {
     result.shownScore = v;
-    finalScoreEl.textContent = v;
+    setFinalScore(v);
     retrigger(finalScoreEl, 'tick');
     Music.sfx('count', v);
   }
@@ -612,7 +683,7 @@ function updateResult(dt) {
 function finishCount() {
   result.done = true;
   result.doneAt = 0;
-  finalScoreEl.textContent = score;
+  setFinalScore(score);
   finalScoreEl.classList.remove('tick');
   retrigger(finalScoreEl, 'land');
   document.getElementById('rays').classList.add('on');
@@ -840,7 +911,11 @@ const flagEl = document.getElementById('flag');
 const maxComboEl = document.getElementById('maxCombo');
 const energyEl = document.querySelector('#energy > i');
 const comboEl = document.getElementById('combo');
-const comboNumEl = comboEl.querySelector('b');
+const comboNumEl = document.getElementById('comboNum');
+
+function drawComboNumber() {
+  drawPixelNumber(comboNumEl, combo, fever ? rainbowAt(260) : () => INK_CSS);
+}
 const judgeEl = document.getElementById('judge');
 const bannerEl = document.getElementById('banner');
 const countEl = document.getElementById('count');
@@ -857,7 +932,7 @@ function updatePowerHud() {
 function updateHud() {
   flagEl.textContent = score;
   maxComboEl.textContent = `MAX ${maxCombo}`;
-  comboNumEl.textContent = combo;
+  drawComboNumber();
   comboEl.hidden = combo < 2;
   comboEl.style.setProperty('--cs', `${comboSize()}px`);
   retrigger(comboEl, 'bump');
@@ -1447,6 +1522,9 @@ function render() {
     ctx.fillRect(0, 0, W, H);
   }
   drawNotes();
+  // 虹色のドット数字は毎フレーム描き直して色を流す
+  if (fever && !comboEl.hidden) drawComboNumber();
+  if (result && result.shown) drawPixelNumber(finalScoreEl, finalScoreText, rainbowAt(200));
 }
 
 // ---------- ループ ----------
