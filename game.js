@@ -61,6 +61,8 @@ const SHOE_TIME = 5;   // 羽つきの靴：コンボ 2 倍の秒数
 const ITEM_START = 12; // この段数を越えたらアイテムが出始める
 const STAR_COLOR = '#ffe14a';
 const SHOE_COLOR = '#39d3ff';
+const ITEM_LIFE = 14;  // アイテムが消えるまでの拍数
+const ITEM_RANGE = [-2, 5]; // 主人公から見て跳ね回る段の範囲
 
 // ---------- スプライト ----------
 // 主人公：w = 白（頭）、o = 金色（体）、k = 黒（目）
@@ -210,7 +212,7 @@ let state = 'title'; // title | play | dead
 let steps, player, cam, energy, score, ghosts, particles, deadTimer, time, started;
 let combo, maxCombo, fever, lastHitBeat, lastHitTime;
 let enemies, hitBeats, laneFx, tempoUp;
-let items, starTime, shoeTime, itemCooldown;
+let items, starTime, shoeTime, itemCooldown, lastItemHop = null;
 let result = null; // 結果発表の進行状況
 let countdown = null; // 3・2・1・START! の進行状況
 let startBeat = -1;   // この拍からノーツが流れ、操作できる
@@ -646,17 +648,52 @@ function smash(e) {
 }
 
 // ---------- アイテム ----------
+function crusherSteps() {
+  return new Set(enemies.filter(e => e.type === 'crusher' && e.phase !== 'rise').map(e => e.step));
+}
+
 function spawnItem() {
-  const busy = new Set(enemies.filter(e => e.type === 'crusher').map(e => e.step));
-  const step = player.idx + 5 + ((Math.random() * 4) | 0);
-  if (busy.has(step)) return;
+  const step = player.idx + 3 + ((Math.random() * 3) | 0);
+  if (crusherSteps().has(step)) return;
   while (steps.length < step + 60) genStep();
-  items.push({ type: Math.random() < 0.35 ? 'star' : 'shoe', step, phase: Math.random() * 6.28 });
+  items.push({ type: Math.random() < 0.35 ? 'star' : 'shoe', step, from: step, anim: 1, life: ITEM_LIFE, phase: Math.random() * 6.28 });
+  // 出現直後は次の拍の裏まで跳ばない
+  lastItemHop = Music.lastBeatTime();
+}
+
+// 拍の裏で、主人公の周りの段へ 1〜2 段ぴょんと跳ぶ（今いる段とクラッシャーの段は避ける）
+function hopItems() {
+  const busy = crusherSteps();
+  for (const it of items) {
+    const lo = Math.max(1, player.idx + ITEM_RANGE[0]);
+    const hi = player.idx + ITEM_RANGE[1];
+    const cands = [-2, -1, 1, 2].map(d => it.step + d)
+      .filter(t => t >= lo && t <= hi && t !== player.idx && !busy.has(t));
+    // 範囲の外に取り残されたら範囲内へ戻る
+    if (!cands.length) {
+      const back = it.step < lo ? lo : hi;
+      if (back !== player.idx && !busy.has(back)) cands.push(back);
+    }
+    if (!cands.length) continue;
+    it.from = it.step;
+    it.step = cands[(Math.random() * cands.length) | 0];
+    it.anim = 0;
+  }
+}
+
+function itemsOnBeat() {
+  for (const it of items) it.life--;
+  items = items.filter(it => it.life > 0);
+}
+
+// アイテムがいる段（跳んでいる途中は、半分を過ぎたら着地先の段）
+function itemStep(it) {
+  return it.anim < 0.5 ? it.from : it.step;
 }
 
 function pickItem() {
   for (const it of items) {
-    if (it.step !== player.idx || it.taken) continue;
+    if (itemStep(it) !== player.idx || it.taken) continue;
     it.taken = true;
     itemCooldown = 16;
     const s = steps[it.step];
@@ -680,8 +717,19 @@ function pickItem() {
 }
 
 function updateItems(dt) {
-  for (const it of items) it.phase += dt * 4;
-  items = items.filter(it => it.step >= player.idx - 10);
+  for (const it of items) {
+    it.phase += dt * 4;
+    it.anim = Math.min(1, it.anim + dt / Math.min(0.22, Music.BEAT * 0.45));
+  }
+  if (state === 'play' && items.length && Music.ready) {
+    const lb = Music.lastBeatTime();
+    if (lb !== null && lastItemHop !== lb && Music.now() >= lb + Music.BEAT / 2) {
+      lastItemHop = lb;
+      hopItems();
+    }
+    // 跳んできたアイテムが足もとに着地した場合も取れる
+    if (!player.falling && player.t >= 1) pickItem();
+  }
   if (starTime > 0) {
     starTime = Math.max(0, starTime - dt);
     // 無敵中は主人公から色つきの光の粒がこぼれる
@@ -817,6 +865,7 @@ function onBeat() {
       const chance = Math.min(0.3, 0.08 + (score - ENEMY_START) * 0.002);
       if (Math.random() < chance) spawnEnemy();
     }
+    itemsOnBeat();
     if (itemCooldown > 0) itemCooldown--;
     if (started && score >= ITEM_START && !items.length && itemCooldown <= 0 && starTime <= 0 && shoeTime <= 0 && Math.random() < 0.07) spawnItem();
   }
@@ -1065,12 +1114,20 @@ function drawPlayer() {
 
 function drawItems() {
   for (const it of items) {
-    const s = steps[it.step];
-    const x = sx(s.x), y = sy(s.y) - 12 + Math.round(Math.sin(it.phase) * 1.5);
+    // 消える直前は点滅
+    if (it.life <= 3 && Math.floor(time * 10) % 2) continue;
+    const a = steps[it.from], b = steps[it.step];
+    const k = it.anim;
+    const wx = a.x + (b.x - a.x) * k;
+    const wy = a.y + (b.y - a.y) * k - Math.sin(Math.PI * k) * 10;
+    const x = sx(wx), y = sy(wy) - 12 + (k >= 1 ? Math.round(Math.sin(it.phase) * 1.5) : 0);
     if (y < -10 || y > H) continue;
-    // 光の輪
+    // 着地先の段に小さな影
+    ctx.fillStyle = it.type === 'star' ? STAR_COLOR : SHOE_COLOR;
+    const shx = sx(b.x), shy = sy(b.y) - 1;
+    ctx.fillRect(shx - 2, shy, 5, 1);
+    // 光の粒
     if (Math.floor(time * 6) % 2) {
-      ctx.fillStyle = it.type === 'star' ? STAR_COLOR : SHOE_COLOR;
       ctx.fillRect(x - 6, y + 3, 1, 1);
       ctx.fillRect(x + 6, y + 3, 1, 1);
       ctx.fillRect(x, y - 3, 1, 1);
