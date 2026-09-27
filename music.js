@@ -326,6 +326,14 @@ const Music = (() => {
     else if (kind === 'count') osc('square', mtof(72 + (n % 12)), t, 0.03, 0.03, master);
     else if (kind === 'fanfare') {
       [72, 76, 79, 84].forEach((m, i) => osc('square', mtof(m), t + i * 0.08, 0.2, 0.06, master));
+    } else if (kind === 'star') {
+      [72, 76, 79, 84, 88, 91, 96].forEach((m, i) => osc('square', mtof(m), t + i * 0.045, 0.12, 0.05, master));
+    } else if (kind === 'shoe') {
+      [79, 84, 91].forEach((m, i) => osc('triangle', mtof(m), t + i * 0.06, 0.15, 0.12, master));
+      noise(t, 0.2, 0.08, 'highpass', 5000, master);
+    } else if (kind === 'smash') {
+      osc('square', 900, t, 0.06, 0.08, master);
+      noise(t, 0.18, 0.25, 'bandpass', 3000, master);
     } else if (kind === 'slam') {
       osc('sine', 90, t, 0.25, 0.5, master);
       noise(t, 0.12, 0.3, 'lowpass', 900, master);

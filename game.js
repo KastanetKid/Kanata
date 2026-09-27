@@ -55,6 +55,13 @@ const TREAD = INK_CSS;
 const RISER = '#6b6760';
 const RAIL = '#b9b5aa';
 
+// ---------- アイテム ----------
+const STAR_TIME = 7;   // 無敵スター：敵もリズムも無視できる秒数
+const SHOE_TIME = 5;   // 羽つきの靴：コンボ 2 倍の秒数
+const ITEM_START = 12; // この段数を越えたらアイテムが出始める
+const STAR_COLOR = '#ffe14a';
+const SHOE_COLOR = '#39d3ff';
+
 // ---------- スプライト ----------
 // 主人公：w = 白（頭）、o = 金色（体）、k = 黒（目）
 const HERO = [
@@ -78,6 +85,25 @@ const HERO_STEP = [
   '..ooo.o',
   '.o...o.',
   'oo....o',
+];
+// o = アイテムの色、w = 白
+const STAR = [
+  '...o...',
+  '..ooo..',
+  'ooowooo',
+  '.ooooo.',
+  '..ooo..',
+  '.oo.oo.',
+  'oo...oo',
+];
+const SHOE = [
+  'w........',
+  'ww.......',
+  '.wwwoo...',
+  '..wwoo...',
+  '....ooo..',
+  '....ooooo',
+  '....wwwww',
 ];
 const GHOST = [
   '..####..',
@@ -184,10 +210,12 @@ let state = 'title'; // title | play | dead
 let steps, player, cam, energy, score, ghosts, particles, deadTimer, time, started;
 let combo, maxCombo, fever, lastHitBeat, lastHitTime;
 let enemies, hitBeats, laneFx, tempoUp;
+let items, starTime, shoeTime, itemCooldown;
 let result = null; // 結果発表の進行状況
 let countdown = null; // 3・2・1・START! の進行状況
 let startBeat = -1;   // この拍からノーツが流れ、操作できる
 let confetti = [];
+let sparks = []; // ワールド座標の色付きの粒（アイテム取得・撃破・無敵）
 let shake = 0, zoom = 0, flash = 0, dark = 0, redFlash = 0, beatPulse = 0, prevBeat = null, cannonSide = 1;
 let best = 0;
 try { best = Number(localStorage.getItem('endless-stair-best')) || 0; } catch (e) { /* ストレージ不可でも遊べる */ }
@@ -217,6 +245,7 @@ function reset() {
   ghosts = [];
   particles = [];
   confetti = [];
+  sparks = [];
   enemies = [];
   laneFx = [];
   hitBeats = new Set();
@@ -228,6 +257,10 @@ function reset() {
   lastHitBeat = -1;
   lastHitTime = 0;
   tempoUp = false;
+  items = [];
+  starTime = 0;
+  shoeTime = 0;
+  itemCooldown = 0;
   result = null;
   countdown = null;
   startBeat = -1;
@@ -319,8 +352,16 @@ function judgeTap() {
 
 // 移動したあとのリズム判定・コンボ処理（上り・下り共通）
 function applyRhythm(gain) {
-  const j = judgeTap();
   started = true;
+  if (starTime > 0) {
+    // 無敵中はタイミングに関係なく全部 GREAT。連打でコンボを稼げる
+    const b = Music.nearestBeat();
+    if (b) lastHitTime = b.time;
+    energy = 1;
+    addCombo('great');
+    return;
+  }
+  const j = judgeTap();
   if (j.kind === 'off') {
     energy = Math.min(1, energy + gain * 0.4);
     Music.sfx('off');
@@ -328,19 +369,24 @@ function applyRhythm(gain) {
     return;
   }
   energy = Math.min(1, energy + (j.kind === 'great' ? gain : gain * 0.75));
-  combo++;
-  maxCombo = Math.max(maxCombo, combo);
   if (j.beat) {
     lastHitBeat = j.beat.index;
     lastHitTime = j.beat.time;
     hitBeats.add(j.beat.index);
     hitBeats.delete(j.beat.index - 16);
   }
-  laneFx.push({ t: 0, kind: j.kind });
-  Music.sfx(j.kind, combo);
-  showJudge(j.kind === 'great' ? 'GREAT' : 'GOOD', j.kind);
+  addCombo(j.kind);
+}
+
+function addCombo(kind) {
+  const gain = shoeTime > 0 ? 2 : 1;
+  combo += gain;
+  maxCombo = Math.max(maxCombo, combo);
+  laneFx.push({ t: 0, kind });
+  Music.sfx(kind, combo);
+  showJudge((kind === 'great' ? 'GREAT' : 'GOOD') + (gain > 1 ? ' ×2' : ''), kind);
   shake += fever ? 1.5 : 0.6;
-  if (combo === FEVER_AT) enterFever();
+  if (!fever && combo >= FEVER_AT) enterFever();
 }
 
 function landHop() {
@@ -361,6 +407,9 @@ function move(side) {
   else if (player.idx === 0) {
     Music.sfx('off');
     breakCombo('OFF BEAT');
+  } else if (starTime > 0) {
+    // 無敵中は段のない側をタップしても落ちない（その場で向きだけ変える）
+    player.dir = side;
   } else {
     landHop();
     player.dir = side;
@@ -378,6 +427,7 @@ function climb(side) {
   while (steps.length < player.idx + 60) genStep();
   dust(next.x, next.y);
   applyRhythm(0.12);
+  pickItem();
   checkCrush();
   if (!tempoUp && score >= TEMPO_UP_AT) {
     tempoUp = true;
@@ -395,6 +445,7 @@ function descend() {
   player.idx--;
   dust(steps[player.idx].x, steps[player.idx].y);
   applyRhythm(0.08);
+  pickItem();
   checkCrush();
   updateHud();
 }
@@ -431,9 +482,13 @@ function breakCombo(label) {
   updateHud();
 }
 
-// 敵に当たったら一発アウト
-function hurt() {
+// 敵に当たったら一発アウト（無敵中は逆に敵を倒す）
+function hurt(enemy) {
   if (player.falling) return;
+  if (starTime > 0) {
+    if (enemy && !enemy.dead) smash(enemy);
+    return;
+  }
   redFlash = 1;
   shake += 9;
   Music.sfx('hurt');
@@ -553,7 +608,7 @@ function enemiesOnBeat() {
 
 function checkCrush() {
   for (const e of enemies) {
-    if (e.type === 'crusher' && e.phase === 'slam' && player.idx === e.step) hurt();
+    if (e.type === 'crusher' && e.phase === 'slam' && player.idx === e.step) hurt(e);
   }
 }
 
@@ -561,7 +616,7 @@ function updateEnemies(dt) {
   for (const e of enemies) {
     if (e.type === 'crusher') {
       e.anim = Math.min(1, e.anim + dt / (e.phase === 'slam' ? 0.06 : 0.3));
-      if (e.phase === 'slam' && !player.falling && player.idx === e.step && player.t >= 1) hurt();
+      if (e.phase === 'slam' && !player.falling && player.idx === e.step && player.t >= 1) hurt(e);
       if (e.phase === 'rise' && e.anim >= 1) e.dead = true;
       if (e.step < player.idx - 12) e.dead = true;
     } else if (e.type === 'bat') {
@@ -569,12 +624,85 @@ function updateEnemies(dt) {
       if (e.phase === 'fly') {
         e.x += e.vx * dt;
         const bx = e.x, by = e.y + Math.sin(e.flap * 0.6) * 1.5;
-        if (!player.falling && Math.abs(bx - player.x) < 6 && Math.abs(by - (player.y - 5)) < 5) hurt();
+        if (!player.falling && Math.abs(bx - player.x) < 6 && Math.abs(by - (player.y - 5)) < 5) hurt(e);
         if (Math.abs(e.x - cam.x) > W / 2 + 14 && Math.sign(e.x - cam.x) === -e.side) e.dead = true;
       }
     }
   }
   enemies = enemies.filter(e => !e.dead);
+}
+
+function smash(e) {
+  e.dead = true;
+  const wx = e.type === 'bat' ? e.x : steps[e.step].x;
+  const wy = e.type === 'bat' ? e.y : steps[e.step].y - 10;
+  for (let i = 0; i < 12; i++) {
+    const a = Math.random() * Math.PI * 2;
+    sparks.push({ x: wx, y: wy, vx: Math.cos(a) * 50, vy: Math.sin(a) * 50, life: 0.5, color: e.type === 'bat' ? RED : PURPLE });
+  }
+  shake += 5;
+  Music.sfx('smash');
+  showJudge('SMASH!', 'great');
+}
+
+// ---------- アイテム ----------
+function spawnItem() {
+  const busy = new Set(enemies.filter(e => e.type === 'crusher').map(e => e.step));
+  const step = player.idx + 5 + ((Math.random() * 4) | 0);
+  if (busy.has(step)) return;
+  while (steps.length < step + 60) genStep();
+  items.push({ type: Math.random() < 0.35 ? 'star' : 'shoe', step, phase: Math.random() * 6.28 });
+}
+
+function pickItem() {
+  for (const it of items) {
+    if (it.step !== player.idx || it.taken) continue;
+    it.taken = true;
+    itemCooldown = 16;
+    const s = steps[it.step];
+    for (let i = 0; i < 14; i++) {
+      const a = Math.random() * Math.PI * 2;
+      sparks.push({ x: s.x, y: s.y - 8, vx: Math.cos(a) * 45, vy: Math.sin(a) * 45, life: 0.6, color: it.type === 'star' ? STAR_COLOR : SHOE_COLOR });
+    }
+    if (it.type === 'star') {
+      starTime = STAR_TIME;
+      showBanner('MUTEKI!!');
+      Music.sfx('star');
+    } else {
+      shoeTime = SHOE_TIME;
+      showBanner('COMBO ×2');
+      Music.sfx('shoe');
+    }
+    shake += 4;
+    vibrate(40);
+  }
+  items = items.filter(it => !it.taken);
+}
+
+function updateItems(dt) {
+  for (const it of items) it.phase += dt * 4;
+  items = items.filter(it => it.step >= player.idx - 10);
+  if (starTime > 0) {
+    starTime = Math.max(0, starTime - dt);
+    // 無敵中は主人公から色つきの光の粒がこぼれる
+    if (Math.random() < dt * 30) {
+      sparks.push({ x: player.x + (Math.random() - 0.5) * 6, y: player.y - Math.random() * 9, vx: (Math.random() - 0.5) * 12, vy: 8 + Math.random() * 10, life: 0.5, color: prismCss(time * 400 + Math.random() * 80) });
+    }
+    if (starTime === 0) {
+      // 無敵が切れた直後は次の拍から判定を再開する
+      const b = Music.nearestBeat();
+      if (b) lastHitTime = b.time;
+      lastHitBeat = -1;
+      showJudge('MUTEKI END', 'miss');
+    }
+  }
+  if (shoeTime > 0) shoeTime = Math.max(0, shoeTime - dt);
+  for (const p of sparks) {
+    p.vy += 40 * dt;
+    p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt;
+  }
+  sparks = sparks.filter(p => p.life > 0);
+  updatePowerHud();
 }
 
 // ---------- HUD ----------
@@ -585,6 +713,15 @@ const comboNumEl = comboEl.querySelector('b');
 const judgeEl = document.getElementById('judge');
 const bannerEl = document.getElementById('banner');
 const countEl = document.getElementById('count');
+const pStarEl = document.getElementById('pStar');
+const pShoeEl = document.getElementById('pShoe');
+
+function updatePowerHud() {
+  pStarEl.hidden = !(starTime > 0);
+  pShoeEl.hidden = !(shoeTime > 0);
+  if (starTime > 0) pStarEl.querySelector('i').style.width = `${starTime / STAR_TIME * 100}%`;
+  if (shoeTime > 0) pShoeEl.querySelector('i').style.width = `${shoeTime / SHOE_TIME * 100}%`;
+}
 
 function updateHud() {
   flagEl.textContent = score;
@@ -680,6 +817,8 @@ function onBeat() {
       const chance = Math.min(0.3, 0.08 + (score - ENEMY_START) * 0.002);
       if (Math.random() < chance) spawnEnemy();
     }
+    if (itemCooldown > 0) itemCooldown--;
+    if (started && score >= ITEM_START && !items.length && itemCooldown <= 0 && starTime <= 0 && shoeTime <= 0 && Math.random() < 0.07) spawnItem();
   }
 }
 
@@ -699,13 +838,13 @@ function update(dt) {
 
   if (state === 'play' && started) {
     const drain = (0.07 + Math.min(0.05, score * 0.0003)) * (Music.BPM / 60);
-    energy -= drain * dt;
+    if (starTime <= 0) energy -= drain * dt;
     if (energy <= 0) {
       energy = 0;
       die('FELL', player.dir);
     }
     // 次の拍を叩かずにやり過ごしたらコンボ切れ
-    if (combo > 0) {
+    if (combo > 0 && starTime <= 0) {
       const nb = Music.beatAfter(lastHitTime);
       if (nb && Music.now() > nb.time + GOOD_WINDOW + 0.02) breakCombo('MISS');
     }
@@ -737,6 +876,7 @@ function update(dt) {
   }
 
   if (state === 'play') updateEnemies(dt);
+  updateItems(dt);
 
   // 幽霊
   if (Math.random() < dt * 0.25 && ghosts.length < 3) spawnGhost();
@@ -905,7 +1045,46 @@ function drawGhosts() {
 
 function drawPlayer() {
   const sprite = player.t < 1 || player.frame ? HERO_STEP : HERO;
-  drawColorSprite(sprite, sx(player.x) - 3, sy(player.y) - 9, GOLD, player.dir < 0);
+  const x = sx(player.x) - 3, y = sy(player.y) - 9;
+  // 無敵中は体が虹色に光る
+  const color = starTime > 0 && !(starTime < 1.5 && Math.floor(starTime * 10) % 2) ? prismCss(time * 600) : GOLD;
+  drawColorSprite(sprite, x, y, color, player.dir < 0);
+  if (shoeTime > 0) {
+    // 羽つきの靴：足もとに羽がぱたぱた
+    const up = Math.floor(time * 12) % 2;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(x - 3, y + 5 + up, 4, 3);
+    ctx.fillRect(x + 6, y + 5 + up, 4, 3);
+    ctx.fillStyle = SHOE_COLOR;
+    ctx.fillRect(x - 2, y + 6 + up, 2, 1);
+    ctx.fillRect(x - 1, y + 7 - up, 1, 1);
+    ctx.fillRect(x + 7, y + 6 + up, 2, 1);
+    ctx.fillRect(x + 7, y + 7 - up, 1, 1);
+  }
+}
+
+function drawItems() {
+  for (const it of items) {
+    const s = steps[it.step];
+    const x = sx(s.x), y = sy(s.y) - 12 + Math.round(Math.sin(it.phase) * 1.5);
+    if (y < -10 || y > H) continue;
+    // 光の輪
+    if (Math.floor(time * 6) % 2) {
+      ctx.fillStyle = it.type === 'star' ? STAR_COLOR : SHOE_COLOR;
+      ctx.fillRect(x - 6, y + 3, 1, 1);
+      ctx.fillRect(x + 6, y + 3, 1, 1);
+      ctx.fillRect(x, y - 3, 1, 1);
+    }
+    if (it.type === 'star') drawColorSprite(STAR, x - 3, y, STAR_COLOR, false);
+    else drawColorSprite(SHOE, x - 4, y, SHOE_COLOR, false);
+  }
+}
+
+function drawSparks() {
+  for (const p of sparks) {
+    ctx.fillStyle = p.color;
+    ctx.fillRect(sx(p.x), sy(p.y), 1, 1);
+  }
 }
 
 function drawParticles() {
@@ -1070,7 +1249,9 @@ function render() {
   dither();
   // ここから下はディザをかけずに色付きで描く
   drawStairsSolid();
+  drawItems();
   drawEnemies();
+  drawSparks();
   drawPlayer();
   drawConfetti();
   if (redFlash > 0.02) {
