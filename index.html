@@ -76,21 +76,9 @@
   canvas.pix { display: block; width: auto; image-rendering: pixelated; image-rendering: crisp-edges; }
   #combo canvas { height: var(--cs); transition: height .15s ease-out; }
   #combo span { font-size: 11px; letter-spacing: 3px; }
-  /* フィーバー中：画面のあちこちへ 4 拍ごとに弾んで移動し、拍ごとに踊る */
-  #combo.roam {
-    left: var(--rx, 50%); top: var(--ry, 30%); transform: translate(-50%, -50%);
-    opacity: .42; text-align: center;
-    transition: left .38s cubic-bezier(.3, 1.7, .5, 1), top .38s cubic-bezier(.3, 1.7, .5, 1);
-  }
-  #combo.roam .cwrap { align-items: center; }
-  #combo.roam span { font-size: 14px; letter-spacing: 5px; }
-  #combo.snap { transition: none; }
+  /* フィーバー中はゲーム画面の中（階段・キャラより奥）に描くので、こちらは隠す */
+  #combo.inbg { visibility: hidden; }
   #combo.snap canvas { transition: none; }
-  #combo .cwrap.dance { animation: dance .3s ease-out; }
-  @keyframes dance {
-    0% { transform: scale(1.22) rotate(var(--tilt, 8deg)); }
-    100% { transform: scale(1) rotate(0); }
-  }
   #combo.bump canvas { animation: bump .18s ease-out; }
   @keyframes bump { from { transform: scale(1.35); } to { transform: scale(1); } }
   body.fever #banner {
@@ -131,8 +119,7 @@
     100% { opacity: 0; transform: translateY(40px); }
   }
   @media (prefers-reduced-motion: reduce) {
-    #combo.bump canvas, #combo .cwrap.dance, #banner.show, #banner[data-kind="down"].show { animation: none; }
-    #combo.roam { transition: none; }
+    #combo.bump canvas, #banner.show, #banner[data-kind="down"].show { animation: none; }
     #banner.show { opacity: 1; }
   }
   #hint { position: fixed; inset: 0; pointer-events: none; font-size: 12px; opacity: .7; }

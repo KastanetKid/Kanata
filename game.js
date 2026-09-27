@@ -517,11 +517,11 @@ for (const y of [12, 21, 30, 39, 46]) {
     COMBO_SPOTS.push([x, y]);
   }
 }
-const COMBO_MIN = 40, COMBO_MAX = 64, COMBO_FEVER = 100; // 数字の高さ（px）
+const COMBO_MIN = 40, COMBO_MAX = 64; // 左上の数字の高さ（px）
 let comboSpot = -1, feverBeats = 0;
 
 function comboSize() {
-  if (fever) return COMBO_FEVER;
+  if (fever) return COMBO_MAX;
   const k = Math.min(1, Math.max(0, combo - 2) / (FEVER_AT - 3));
   return Math.round(COMBO_MIN + (COMBO_MAX - COMBO_MIN) * k);
 }
@@ -529,9 +529,8 @@ function comboSize() {
 // 候補の場所に数字を置いたときの四角（ゲーム内 px）と、見えている階段・主人公との距離の最小値。
 // 重なっていれば 0 以下になる
 function spotClearance([px, py]) {
-  const k = W / window.innerWidth; // 画面 px → ゲーム内 px
-  const hw = (comboNumEl.width / comboNumEl.height * COMBO_FEVER) * k / 2 + 2;
-  const hh = (COMBO_FEVER + 18) * k / 2 + 2;
+  const { w, h } = bgComboSize();
+  const hw = w / 2 + 2, hh = h / 2 + 2;
   const cx = px / 100 * W, cy = py / 100 * H;
   const dist = (x, y) => Math.hypot(Math.max(0, Math.abs(x - cx) - hw), Math.max(0, Math.abs(y - cy) - hh));
   let best = Infinity;
@@ -550,31 +549,89 @@ function moveCombo() {
   const good = scored.filter(o => o.d >= top * 0.85 && o.d >= 0);
   const i = good[(Math.random() * good.length) | 0].i;
   comboSpot = i;
-  comboEl.style.setProperty('--rx', `${COMBO_SPOTS[i][0]}%`);
-  comboEl.style.setProperty('--ry', `${COMBO_SPOTS[i][1]}%`);
+  bgCombo.tx = COMBO_SPOTS[i][0] / 100 * W;
+  bgCombo.ty = COMBO_SPOTS[i][1] / 100 * H;
+}
+
+// ---- フィーバー中のコンボ：ゲーム画面の中、背景のすぐ上（階段・キャラより奥）に描く ----
+const BG_COMBO_CELL = 3;    // 1 ドットの大きさ（ゲーム内 px）
+const BG_COMBO_ALPHA = 0.55;
+const LETTERS = {
+  C: ['111', '100', '100', '100', '111'],
+  O: ['111', '101', '101', '101', '111'],
+  M: ['10001', '11011', '10101', '10001', '10001'],
+  B: ['110', '101', '110', '101', '110'],
+};
+const bgCombo = { x: 0, y: 0, tx: 0, ty: 0, vx: 0, vy: 0 };
+
+// 数字＋「COMBO」の文字を合わせた大きさ（ゲーム内 px）
+function bgComboSize() {
+  const n = String(Math.max(combo, 10)).length;
+  return { w: (n * 6 - 1) * BG_COMBO_CELL, h: 7 * BG_COMBO_CELL + 8 };
+}
+
+// バネのように弾んで次の場所へ
+function updateBgCombo(dt) {
+  if (!fever) return;
+  const k = 170, c = 13;
+  bgCombo.vx += (k * (bgCombo.tx - bgCombo.x) - c * bgCombo.vx) * dt;
+  bgCombo.vy += (k * (bgCombo.ty - bgCombo.y) - c * bgCombo.vy) * dt;
+  bgCombo.x += bgCombo.vx * dt;
+  bgCombo.y += bgCombo.vy * dt;
+}
+
+function drawBgCombo() {
+  if (!fever || combo < 2) return;
+  const text = String(combo);
+  const cell = BG_COMBO_CELL;
+  const { w, h } = bgComboSize();
+  const tw = (text.length * 6 - 1) * cell;
+  // 拍ごとに跳ねて、左右に少し揺れる
+  const hop = Math.round(beatPulse * 4);
+  const wig = beatPulse > 0.3 ? (feverBeats % 2 ? -1 : 1) : 0;
+  const x0 = Math.round(bgCombo.x - tw / 2) + wig;
+  const y0 = Math.round(bgCombo.y - h / 2) - hop;
+  const dots = fn => {
+    for (let i = 0; i < text.length; i++) {
+      const g = DIGITS[text[i]];
+      for (let r = 0; r < 7; r++) for (let k = 0; k < 5; k++) if (g[r][k] === '1') fn(x0 + (i * 6 + k) * cell, y0 + r * cell, i * 6 + k, r);
+    }
+  };
+  ctx.globalAlpha = BG_COMBO_ALPHA;
+  ctx.fillStyle = '#000';
+  dots((x, y) => ctx.fillRect(x - 1, y - 1, cell + 2, cell + 2));
+  dots((x, y, col, row) => { ctx.fillStyle = prismCss(col * 14 + row * 4 - time * 260); ctx.fillRect(x, y, cell, cell); });
+  // 下に小さく「COMBO」
+  const word = 'COMBO';
+  const lw = [...word].reduce((a, ch) => a + LETTERS[ch][0].length + 1, -1);
+  let lx = Math.round(bgCombo.x - lw / 2) + wig;
+  const ly = y0 + 7 * cell + 3;
+  ctx.fillStyle = INK_CSS;
+  for (const ch of word) {
+    const g = LETTERS[ch];
+    for (let r = 0; r < 5; r++) for (let k = 0; k < g[r].length; k++) if (g[r][k] === '1') ctx.fillRect(lx + k, ly + r, 1, 1);
+    lx += g[0].length + 1;
+  }
+  ctx.globalAlpha = 1;
 }
 
 // コンボが切れたらアニメーションなしで一瞬で左上に戻す
 function comboHome() {
   comboEl.classList.add('snap');
-  comboEl.classList.remove('roam');
+  comboEl.classList.remove('inbg');
   comboSpot = -1;
   comboEl.style.setProperty('--cs', `${COMBO_MIN}px`);
   void comboEl.offsetWidth;
   comboEl.classList.remove('snap');
 }
 
-function danceCombo() {
-  const w = comboEl.querySelector('.cwrap');
-  w.style.setProperty('--tilt', `${feverBeats % 2 ? -9 : 9}deg`);
-  retrigger(w, 'dance');
-}
-
 function enterFever() {
   fever = true;
   feverBeats = 0;
+  // 左上の数字の位置から飛び出して、空いている場所へ
+  Object.assign(bgCombo, { x: 18, y: H * 0.1, vx: 0, vy: 0 });
   moveCombo();
-  comboEl.classList.add('roam');
+  comboEl.classList.add('inbg');
   flash = 1;
   shake += 10;
   zoom = 1;
@@ -1027,7 +1084,6 @@ function onBeat() {
     // コンボの数字：拍ごとに踊り、4 拍ごとに別の場所へ
     feverBeats++;
     if (feverBeats % 4 === 0) moveCombo();
-    danceCombo();
   }
   if (state === 'play') {
     enemiesOnBeat();
@@ -1097,6 +1153,7 @@ function update(dt) {
   }
 
   if (state === 'play') updateEnemies(dt);
+  updateBgCombo(dt);
   updateItems(dt);
 
   // 幽霊
@@ -1515,6 +1572,7 @@ function render() {
   drawParticles();
   dither();
   // ここから下はディザをかけずに色付きで描く
+  drawBgCombo(); // フィーバー中のコンボは階段・キャラより奥
   drawStairsSolid();
   drawItems();
   drawEnemies();
@@ -1528,7 +1586,6 @@ function render() {
   }
   drawNotes();
   // 虹色のドット数字は毎フレーム描き直して色を流す
-  if (fever && !comboEl.hidden) drawComboNumber();
   if (result && result.shown) drawPixelNumber(finalScoreEl, finalScoreText, rainbowAt(200), FINAL_SCORE_PX);
 }
 
