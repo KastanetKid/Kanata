@@ -33,7 +33,7 @@ const STEP_W = 12;
 const HOP_TIME = 0.09;
 
 // リズム判定（秒）
-const GREAT_WINDOW = 0.07;
+const GREAT_WINDOW = 0.085;
 const GOOD_WINDOW = 0.13;
 const FEVER_AT = 20;
 
@@ -209,7 +209,7 @@ const CONFETTI_COLORS = ['#ff3b6b', '#ffd23b', '#3bffb0', '#3bb8ff', '#b43bff', 
 
 // ---------- 状態 ----------
 let state = 'title'; // title | play | dead
-let steps, player, cam, energy, score, ghosts, particles, deadTimer, time, started;
+let steps, player, cam, energy, score, height, ghosts, particles, deadTimer, time, started;
 let combo, maxCombo, fever, lastHitBeat, lastHitTime;
 let enemies, hitBeats, laneFx, tempoUp;
 let items, starTime, shoeTime, itemCooldown, lastItemHop = null;
@@ -220,7 +220,7 @@ let confetti = [];
 let sparks = []; // ワールド座標の色付きの粒（アイテム取得・撃破・無敵）
 let shake = 0, zoom = 0, flash = 0, dark = 0, redFlash = 0, beatPulse = 0, prevBeat = null, cannonSide = 1;
 let best = 0;
-try { best = Number(localStorage.getItem('endless-stair-best')) || 0; } catch (e) { /* ストレージ不可でも遊べる */ }
+try { best = Number(localStorage.getItem('endless-stair-best-v2')) || 0; } catch (e) { /* ストレージ不可でも遊べる */ }
 
 function genStep() {
   const prev = steps[steps.length - 1];
@@ -243,7 +243,8 @@ function reset() {
   player = { idx: 0, x: 0, y: 0, fx: 0, fy: 0, t: 1, dir: 1, frame: 0, vx: 0, vy: 0, falling: false };
   cam = { x: 0, y: 0 };
   energy = 1;
-  score = 0;
+  score = 0;  // これまでに稼いだコンボの合計
+  height = 0; // 到達した一番高い段（敵・アイテム・テンポアップの目安）
   ghosts = [];
   particles = [];
   confetti = [];
@@ -383,6 +384,7 @@ function applyRhythm(gain) {
 function addCombo(kind) {
   const gain = shoeTime > 0 ? 2 : 1;
   combo += gain;
+  score += gain;
   maxCombo = Math.max(maxCombo, combo);
   laneFx.push({ t: 0, kind });
   Music.sfx(kind, combo);
@@ -425,13 +427,13 @@ function climb(side) {
   player.dir = side;
 
   player.idx++;
-  score = Math.max(score, player.idx);
+  height = Math.max(height, player.idx);
   while (steps.length < player.idx + 60) genStep();
   dust(next.x, next.y);
   applyRhythm(0.12);
   pickItem();
   checkCrush();
-  if (!tempoUp && score >= TEMPO_UP_AT) {
+  if (!tempoUp && height >= TEMPO_UP_AT) {
     tempoUp = true;
     Music.setTempo(TEMPO_UP_BPM);
     showBanner('TEMPO UP!');
@@ -513,7 +515,7 @@ function die(reason, side) {
   const isBest = score > best && score > 0;
   if (isBest) {
     best = score;
-    try { localStorage.setItem('endless-stair-best', String(best)); } catch (e) { /* 無視 */ }
+    try { localStorage.setItem('endless-stair-best-v2', String(best)); } catch (e) { /* 無視 */ }
   }
   result = { reason, isBest, shown: false, t: 0, shownScore: -1, done: false, doneAt: 0 };
 }
@@ -542,7 +544,7 @@ function updateResult(dt) {
   }
   if (result.done) { result.doneAt += dt; return; }
   result.t += dt;
-  const dur = Math.min(1.8, 0.5 + score * 0.012);
+  const dur = Math.min(2, 0.5 + score * 0.006);
   const k = Math.min(1, result.t / dur);
   const v = Math.round(score * (1 - Math.pow(1 - k, 3)));
   if (v !== result.shownScore) {
@@ -755,6 +757,7 @@ function updateItems(dt) {
 
 // ---------- HUD ----------
 const flagEl = document.getElementById('flag');
+const maxComboEl = document.getElementById('maxCombo');
 const energyEl = document.querySelector('#energy > i');
 const comboEl = document.getElementById('combo');
 const comboNumEl = comboEl.querySelector('b');
@@ -773,6 +776,7 @@ function updatePowerHud() {
 
 function updateHud() {
   flagEl.textContent = score;
+  maxComboEl.textContent = `MAX ${maxCombo}`;
   comboNumEl.textContent = combo;
   comboEl.hidden = combo < 2;
   retrigger(comboEl, 'bump');
@@ -861,13 +865,13 @@ function onBeat() {
   }
   if (state === 'play') {
     enemiesOnBeat();
-    if (started && score >= ENEMY_START && enemies.length < 2) {
-      const chance = Math.min(0.3, 0.08 + (score - ENEMY_START) * 0.002);
+    if (started && height >= ENEMY_START && enemies.length < 2) {
+      const chance = Math.min(0.3, 0.08 + (height - ENEMY_START) * 0.002);
       if (Math.random() < chance) spawnEnemy();
     }
     itemsOnBeat();
     if (itemCooldown > 0) itemCooldown--;
-    if (started && score >= ITEM_START && !items.length && itemCooldown <= 0 && starTime <= 0 && shoeTime <= 0 && Math.random() < 0.07) spawnItem();
+    if (started && height >= ITEM_START && !items.length && itemCooldown <= 0 && starTime <= 0 && shoeTime <= 0 && Math.random() < 0.07) spawnItem();
   }
 }
 
@@ -886,7 +890,7 @@ function update(dt) {
   }
 
   if (state === 'play' && started) {
-    const drain = (0.07 + Math.min(0.05, score * 0.0003)) * (Music.BPM / 60);
+    const drain = (0.07 + Math.min(0.05, height * 0.0003)) * (Music.BPM / 60);
     if (starTime <= 0) energy -= drain * dt;
     if (energy <= 0) {
       energy = 0;

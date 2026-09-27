@@ -32,6 +32,7 @@
     padding: 3px 12px 3px 18px; min-width: 36px; text-align: right;
     clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, 10px 50%);
   }
+  #maxCombo { font-size: 11px; letter-spacing: 1px; opacity: .85; text-shadow: 0 0 3px #000; font-variant-numeric: tabular-nums; }
   #energy { width: 72px; height: 4px; border: 1px solid var(--ink); }
   .power { width: 72px; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; text-shadow: 0 0 3px #000; }
   .power[hidden] { display: none; }
@@ -140,6 +141,7 @@
 
 <div id="hud">
   <div id="flag">0</div>
+  <div id="maxCombo">MAX 0</div>
   <div id="energy"><i></i></div>
   <div id="pStar" class="power" hidden><b>★ 無敵</b><i></i></div>
   <div id="pShoe" class="power" hidden><b>×2 COMBO</b><i></i></div>
@@ -154,7 +156,7 @@
   <h1>ENDLESS<br>STAIR</h1>
   <p>BGMのビートに合わせて<br>次の段がある側をタップ</p>
   <p>下のノーツが中央で重なる瞬間がビート<br>前の段がある側をタップすると一段下る</p>
-  <p>20コンボで FEVER!!<br><span style="color:#b84dff">■</span> <span style="color:#ff3355">▲</span> 色付きの敵に当たると一発アウト<br><span style="color:#ffe14a">★</span> 無敵7秒　<span style="color:#39d3ff">羽の靴</span> コンボ2倍5秒</p>
+  <p>スコア ＝ 稼いだコンボの合計<br>20コンボで FEVER!!<br><span style="color:#b84dff">■</span> <span style="color:#ff3355">▲</span> 色付きの敵に当たると一発アウト<br><span style="color:#ffe14a">★</span> 無敵7秒　<span style="color:#39d3ff">羽の靴</span> コンボ2倍5秒</p>
   <p class="blink">TAP TO START</p>
   <p>♪ 音を出して遊んでね</p>
 </div>
