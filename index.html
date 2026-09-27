@@ -45,6 +45,58 @@
   .overlay p { margin: 0; font-size: 14px; line-height: 1.7; }
   .blink { animation: blink 1.1s steps(2, start) infinite; }
   @keyframes blink { to { visibility: hidden; } }
+  #combo {
+    position: fixed; top: calc(env(safe-area-inset-top) + 12px); left: 14px;
+    display: flex; flex-direction: column; line-height: 1; pointer-events: none;
+    font-variant-numeric: tabular-nums; text-shadow: 0 0 4px #000;
+  }
+  #combo[hidden] { display: none; }
+  #combo b { font-size: 40px; }
+  #combo span { font-size: 11px; letter-spacing: 3px; }
+  #combo.bump b { animation: bump .18s ease-out; }
+  @keyframes bump { from { transform: scale(1.35); } to { transform: scale(1); } }
+  body.fever #combo b, body.fever #banner {
+    background: linear-gradient(90deg, #ff3b6b, #ffd23b, #3bffb0, #3bb8ff, #b43bff, #ff3b6b);
+    background-size: 200% 100%; -webkit-background-clip: text; background-clip: text;
+    color: transparent; text-shadow: none; animation: prism .6s linear infinite;
+  }
+  body.fever #combo.bump b { animation: prism .6s linear infinite, bump .18s ease-out; }
+  @keyframes prism { to { background-position: 200% 0; } }
+  #judge {
+    position: fixed; left: 0; right: 0; top: 40%; text-align: center;
+    font-size: 16px; font-weight: 700; letter-spacing: 3px; pointer-events: none;
+    opacity: 0; text-shadow: 0 0 4px #000, 0 0 2px #000;
+  }
+  #judge[data-kind="great"] { font-size: 20px; }
+  #judge[data-kind="miss"] { color: #8a8a8a; }
+  #judge.pop { animation: pop .45s ease-out; }
+  @keyframes pop {
+    0% { opacity: 1; transform: translateY(6px) scale(1.25); }
+    70% { opacity: 1; transform: translateY(-4px) scale(1); }
+    100% { opacity: 0; transform: translateY(-8px); }
+  }
+  #banner {
+    position: fixed; left: 0; right: 0; top: 28%; text-align: center;
+    font-size: 44px; font-weight: 800; letter-spacing: 4px; font-style: italic;
+    pointer-events: none; opacity: 0;
+  }
+  #banner[data-kind="down"] { color: #9a9a9a; font-style: normal; font-size: 32px; }
+  #banner.show { animation: banner 1.1s ease-out; }
+  #banner[data-kind="down"].show { animation: bannerDown .8s ease-in; }
+  @keyframes banner {
+    0% { opacity: 0; transform: scale(2.4) rotate(-6deg); }
+    15% { opacity: 1; transform: scale(1) rotate(-3deg); }
+    75% { opacity: 1; transform: scale(1.05) rotate(-3deg); }
+    100% { opacity: 0; transform: scale(1.4) rotate(-3deg); }
+  }
+  @keyframes bannerDown {
+    0% { opacity: 1; transform: translateY(0); }
+    100% { opacity: 0; transform: translateY(40px); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #combo.bump b, #banner.show, #banner[data-kind="down"].show { animation: none; }
+    #banner.show { opacity: 1; }
+  }
   #hint {
     position: fixed; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom) + 22px);
     display: flex; justify-content: space-between; padding: 0 28px;
@@ -60,20 +112,27 @@
   <div id="energy"><i></i></div>
 </div>
 
+<div id="combo" hidden><b>0</b><span>COMBO</span></div>
+<div id="judge"></div>
+<div id="banner"></div>
+
 <div id="title" class="overlay">
   <h1>ENDLESS<br>STAIR</h1>
-  <p>次の段がある側を<br>タップして登ろう</p>
+  <p>BGMのビートに合わせて<br>次の段がある側をタップ</p>
+  <p>20コンボで FEVER!!</p>
   <p class="blink">TAP TO START</p>
+  <p>♪ 音を出して遊んでね</p>
 </div>
 
 <div id="over" class="overlay" hidden>
   <h1>FELL</h1>
-  <p>SCORE <b id="finalScore">0</b><br>BEST <b id="bestScore">0</b></p>
+  <p>SCORE <b id="finalScore">0</b><br>MAX COMBO <b id="finalCombo">0</b><br>BEST <b id="bestScore">0</b></p>
   <p class="blink">TAP TO RETRY</p>
 </div>
 
 <div id="hint"><span>◀ 左上へ</span><span>右上へ ▶</span></div>
 
+<script src="music.js"></script>
 <script src="game.js"></script>
 </body>
 </html>
