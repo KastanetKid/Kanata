@@ -334,6 +334,9 @@ const Music = (() => {
     } else if (kind === 'smash') {
       osc('square', 900, t, 0.06, 0.08, master);
       noise(t, 0.18, 0.25, 'bandpass', 3000, master);
+    } else if (kind === 'warn') {
+      osc('square', mtof(88), t, 0.05, 0.05, master);
+      osc('square', mtof(88), t + 0.08, 0.05, 0.05, master);
     } else if (kind === 'slam') {
       osc('sine', 90, t, 0.25, 0.5, master);
       noise(t, 0.12, 0.3, 'lowpass', 900, master);
