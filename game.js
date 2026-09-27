@@ -43,9 +43,9 @@ const TEMPO_UP_BPM = 140;
 
 // 自動スクロール：カメラが一定の速さで上がっていく（1 拍あたりの段数）
 // 拍どおりに登れば 1 拍 1 段なので、登り続けていれば追いつかれない
-const SCROLL_BASE = 0.5;      // 最初は 2 拍で 1 段
-const SCROLL_MAX = 0.65;      // 高く登っても 3 拍で 2 段くらいまで
-const SCROLL_RAMP = 0.001;    // 1 段登るごとの増え方
+const SCROLL_BASE = 0.25;     // 最初は 4 拍で 1 段
+const SCROLL_MAX = 0.33;      // 高く登っても 3 拍で 1 段くらいまで
+const SCROLL_RAMP = 0.0005;   // 1 段登るごとの増え方
 // ノーツレーンの高さ（画面の割合）
 const LANE_Y = 0.78;
 const NOTE_BEATS = 2; // ノーツが端から中央まで何拍かけて飛んでくるか
