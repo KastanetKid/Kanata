@@ -66,12 +66,28 @@
   @keyframes blink { to { visibility: hidden; } }
   #combo {
     position: fixed; top: calc(env(safe-area-inset-top) + 12px); left: 14px;
-    display: flex; flex-direction: column; line-height: 1; pointer-events: none;
+    line-height: 1; pointer-events: none;
     font-variant-numeric: tabular-nums; text-shadow: 0 0 4px #000;
+    --cs: 40px; /* 数字の大きさ（コンボが増えるほど JS で大きくする） */
   }
   #combo[hidden] { display: none; }
-  #combo b { font-size: 40px; }
+  #combo .cwrap { display: flex; flex-direction: column; }
+  #combo b { font-size: var(--cs); transition: font-size .15s ease-out; }
   #combo span { font-size: 11px; letter-spacing: 3px; }
+  /* フィーバー中：画面のあちこちへ 4 拍ごとに弾んで移動し、拍ごとに踊る */
+  #combo.roam {
+    left: var(--rx, 50%); top: var(--ry, 30%); transform: translate(-50%, -50%);
+    opacity: .9; text-align: center;
+    transition: left .38s cubic-bezier(.3, 1.7, .5, 1), top .38s cubic-bezier(.3, 1.7, .5, 1);
+  }
+  #combo.roam .cwrap { align-items: center; }
+  #combo.snap { transition: none; }
+  #combo.snap b { transition: none; }
+  #combo .cwrap.dance { animation: dance .3s ease-out; }
+  @keyframes dance {
+    0% { transform: scale(1.22) rotate(var(--tilt, 8deg)); }
+    100% { transform: scale(1) rotate(0); }
+  }
   #combo.bump b { animation: bump .18s ease-out; }
   @keyframes bump { from { transform: scale(1.35); } to { transform: scale(1); } }
   body.fever #combo b, body.fever #banner {
@@ -113,7 +129,8 @@
     100% { opacity: 0; transform: translateY(40px); }
   }
   @media (prefers-reduced-motion: reduce) {
-    #combo.bump b, #banner.show, #banner[data-kind="down"].show { animation: none; }
+    #combo.bump b, #combo .cwrap.dance, #banner.show, #banner[data-kind="down"].show { animation: none; }
+    #combo.roam { transition: none; }
     #banner.show { opacity: 1; }
   }
   #hint { position: fixed; inset: 0; pointer-events: none; font-size: 12px; opacity: .7; }
@@ -186,7 +203,7 @@
   <div id="pShoe" class="power" hidden><b>×2 COMBO</b><i></i></div>
 </div>
 
-<div id="combo" hidden><b>0</b><span>COMBO</span></div>
+<div id="combo" hidden><div class="cwrap"><b>0</b><span>COMBO</span></div></div>
 <div id="judge"></div>
 <div id="banner"></div>
 <div id="count"></div>

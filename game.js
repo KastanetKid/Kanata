@@ -278,6 +278,7 @@ function reset() {
   startBeat = -1;
   if (Music.ready) Music.setTempo(Music.BASE_BPM);
   document.body.classList.remove('fever');
+  comboHome();
   updateHud();
 }
 
@@ -463,8 +464,48 @@ function descend() {
   updateHud();
 }
 
+// ---------- コンボ表示 ----------
+// フィーバー中にコンボの数字が移動する場所（画面に対する %）。
+// 真ん中の主人公・下のノーツレーン・右上のスコアは避ける
+const COMBO_SPOTS = [[24, 13], [50, 11], [74, 30], [18, 36], [82, 42], [50, 26], [22, 54], [78, 56]];
+const COMBO_MIN = 40, COMBO_MAX = 64, COMBO_FEVER = 58; // 数字の大きさ（px）
+let comboSpot = -1, feverBeats = 0;
+
+function comboSize() {
+  if (fever) return COMBO_FEVER;
+  const k = Math.min(1, Math.max(0, combo - 2) / (FEVER_AT - 3));
+  return Math.round(COMBO_MIN + (COMBO_MAX - COMBO_MIN) * k);
+}
+
+function moveCombo() {
+  let i;
+  do { i = (Math.random() * COMBO_SPOTS.length) | 0; } while (i === comboSpot);
+  comboSpot = i;
+  comboEl.style.setProperty('--rx', `${COMBO_SPOTS[i][0]}%`);
+  comboEl.style.setProperty('--ry', `${COMBO_SPOTS[i][1]}%`);
+}
+
+// コンボが切れたらアニメーションなしで一瞬で左上に戻す
+function comboHome() {
+  comboEl.classList.add('snap');
+  comboEl.classList.remove('roam');
+  comboSpot = -1;
+  comboEl.style.setProperty('--cs', `${COMBO_MIN}px`);
+  void comboEl.offsetWidth;
+  comboEl.classList.remove('snap');
+}
+
+function danceCombo() {
+  const w = comboEl.querySelector('.cwrap');
+  w.style.setProperty('--tilt', `${feverBeats % 2 ? -9 : 9}deg`);
+  retrigger(w, 'dance');
+}
+
 function enterFever() {
   fever = true;
+  feverBeats = 0;
+  moveCombo();
+  comboEl.classList.add('roam');
   flash = 1;
   shake += 10;
   zoom = 1;
@@ -480,6 +521,7 @@ function breakCombo(label) {
   if (combo > 0 || wasFever) showJudge(label, 'miss');
   combo = 0;
   lastHitBeat = -1;
+  comboHome();
   if (wasFever) {
     // 一気に通常モードへ戻す
     fever = false;
@@ -817,6 +859,7 @@ function updateHud() {
   maxComboEl.textContent = `MAX ${maxCombo}`;
   comboNumEl.textContent = combo;
   comboEl.hidden = combo < 2;
+  comboEl.style.setProperty('--cs', `${comboSize()}px`);
   retrigger(comboEl, 'bump');
 }
 
@@ -901,6 +944,10 @@ function onBeat() {
     shake += 2.5 + level * 1.2;
     zoom = 1;
     beatConfetti();
+    // コンボの数字：拍ごとに踊り、4 拍ごとに別の場所へ
+    feverBeats++;
+    if (feverBeats % 4 === 0) moveCombo();
+    danceCombo();
   }
   if (state === 'play') {
     enemiesOnBeat();
