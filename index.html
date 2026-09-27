@@ -79,10 +79,10 @@
   /* フィーバー中：画面のあちこちへ 4 拍ごとに弾んで移動し、拍ごとに踊る */
   #combo.roam {
     left: var(--rx, 50%); top: var(--ry, 30%); transform: translate(-50%, -50%);
-    opacity: .62; text-align: center;
+    opacity: .42; text-align: center;
     transition: left .38s cubic-bezier(.3, 1.7, .5, 1), top .38s cubic-bezier(.3, 1.7, .5, 1);
   }
-  #combo.roam .cwrap { align-items: center; filter: blur(1.4px); }
+  #combo.roam .cwrap { align-items: center; }
   #combo.roam span { font-size: 14px; letter-spacing: 5px; }
   #combo.snap { transition: none; }
   #combo.snap canvas { transition: none; }

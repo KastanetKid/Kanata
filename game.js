@@ -480,13 +480,17 @@ const DIGITS = {
   9: ['01110', '10001', '10001', '01111', '00001', '00010', '01100'],
 };
 
-// colorAt(列, 行) で 1 ドットごとの色を決める。黒い 1 ドットのふち付き
-function drawPixelNumber(cv, text, colorAt) {
+// colorAt(列, 行) で 1 ドットごとの色を決める。黒い 1 ドットのふち付き。
+// ブラウザの拡大に頼るとぼやける端末があるので、表示サイズ×画素密度に合わせた
+// 大きさ（1 ドット = cell px）で描く
+function drawPixelNumber(cv, text, colorAt, cssHeight) {
   text = String(text);
-  const w = text.length * 6 + 1, h = 9;
+  const cell = Math.max(1, Math.ceil(cssHeight * (window.devicePixelRatio || 1) / 9));
+  const w = (text.length * 6 + 1) * cell, h = 9 * cell;
   if (cv.width !== w) cv.width = w;
   if (cv.height !== h) cv.height = h;
   const c = cv.getContext('2d');
+  c.setTransform(cell, 0, 0, cell, 0, 0);
   c.clearRect(0, 0, w, h);
   const on = (fn) => {
     for (let i = 0; i < text.length; i++) {
@@ -640,10 +644,11 @@ function die(reason, side) {
 const overEl = document.getElementById('over');
 const finalScoreEl = document.getElementById('finalScore');
 let finalScoreText = '0';
+const FINAL_SCORE_PX = 88; // index.html の #finalScore の高さと合わせる
 
 function setFinalScore(v) {
   finalScoreText = String(v);
-  drawPixelNumber(finalScoreEl, finalScoreText, rainbowAt(200));
+  drawPixelNumber(finalScoreEl, finalScoreText, rainbowAt(200), FINAL_SCORE_PX);
 }
 
 function showResult() {
@@ -914,7 +919,7 @@ const comboEl = document.getElementById('combo');
 const comboNumEl = document.getElementById('comboNum');
 
 function drawComboNumber() {
-  drawPixelNumber(comboNumEl, combo, fever ? rainbowAt(260) : () => INK_CSS);
+  drawPixelNumber(comboNumEl, combo, fever ? rainbowAt(260) : () => INK_CSS, comboSize());
 }
 const judgeEl = document.getElementById('judge');
 const bannerEl = document.getElementById('banner');
@@ -1524,7 +1529,7 @@ function render() {
   drawNotes();
   // 虹色のドット数字は毎フレーム描き直して色を流す
   if (fever && !comboEl.hidden) drawComboNumber();
-  if (result && result.shown) drawPixelNumber(finalScoreEl, finalScoreText, rainbowAt(200));
+  if (result && result.shown) drawPixelNumber(finalScoreEl, finalScoreText, rainbowAt(200), FINAL_SCORE_PX);
 }
 
 // ---------- ループ ----------
