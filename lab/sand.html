@@ -1,0 +1,568 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b0b0d">
+<title>DUSTBOX — Kanata Lab</title>
+<meta name="description" content="砂、水、火、溶岩、火薬、種。指でなぞると、ひと粒ずつが決まりどおりに動きだす箱庭。">
+<meta property="og:title" content="DUSTBOX — なぞって描く箱庭">
+<meta property="og:description" content="砂、水、火、溶岩、火薬、種。指でなぞると、ひと粒ずつが決まりどおりに動きだす箱庭。">
+<meta property="og:image" content="https://kastanetkid.github.io/Kanata/lab/img/sand.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="kit.css">
+<style>
+  canvas.stage { image-rendering: pixelated; cursor: crosshair; }
+  .k-bar { flex-direction: column; gap: 8px; overflow: visible; background: var(--bg); border-top: 1px solid var(--line); padding-top: 8px; }
+  .row { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding: 0 2px; }
+  .row::-webkit-scrollbar { display: none; }
+  .tool { height: 38px; min-width: 0; padding: 0 10px 0 8px; gap: 7px; }
+  .tool i { width: 14px; height: 14px; border-radius: 2px; flex: none; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .22); }
+  .tool.on { background: var(--ink); color: var(--bg); }
+  .row .sp { flex: 1; min-width: 6px; }
+  .mini { height: 34px; min-width: 34px; padding: 0 8px; font-size: 11px; letter-spacing: 0; }
+  .dot { display: block; border-radius: 50%; background: currentColor; }
+  .k-hint { bottom: auto; top: calc(var(--st) + 64px); }
+</style>
+</head>
+<body>
+<canvas id="c" class="stage" aria-label="箱庭。なぞると、選んだ素材を置く"></canvas>
+<script src="kit.js"></script>
+<script>
+'use strict';
+// DUSTBOX
+// マス目のひとつひとつが「砂」「水」「火」などの粒。毎フレーム、粒ごとに近所だけを見る単純な決まりを当てはめる。
+//   粉   : 下が空いていれば落ちる。だめなら斜め下へ（山になる）
+//   液体 : 落ちる → 斜め下 → 横へ流れる（水平になる）。軽い液体は重い液体の上に浮く
+//   気体 : 上へ。蒸気は冷えると水に戻る（雨になる）
+//   反応 : 火は燃えるものへ移る／水で消える。溶岩＋水＝石と蒸気。草は水を吸って伸びる。火薬は連鎖して爆ぜる。種は茎を伸ばして花を咲かせる
+const EMPTY = 0, WALL = 1, SAND = 2, WATER = 3, PLANT = 4, FIRE = 5, OIL = 6, LAVA = 7, STONE = 8, STEAM = 9,
+  SMOKE = 10, POWDER = 11, ACID = 12, SEED = 13, FLOWER = 14, WOOD = 15, SPROUT = 16, EMBER = 17, BOOM = 18;
+// 重さ：自分より軽い相手とは入れ替われる。255 は動かない
+const DENS = new Uint8Array(19);
+DENS.set([0, 255, 7, 4, 255, 1, 3, 6, 7, 1, 1, 7, 4, 7, 255, 255, 255, 255, 255]);
+// 燃え移りやすさ（1 フレームあたりの確率）と、燃え続ける長さ
+const FLAM = new Float32Array(19), BURN = new Uint8Array(19);
+FLAM[PLANT] = 0.07; BURN[PLANT] = 26;
+FLAM[OIL] = 0.3; BURN[OIL] = 22;
+FLAM[WOOD] = 0.018; BURN[WOOD] = 110;
+FLAM[SEED] = 0.1; BURN[SEED] = 12;
+FLAM[FLOWER] = 0.1; BURN[FLOWER] = 14;
+FLAM[SPROUT] = 0.1; BURN[SPROUT] = 14;
+FLAM[POWDER] = 1; BURN[POWDER] = 0;
+
+let GW = 160, GH = 300, type, aux, shade, mark, tick = 1, pix32, pix8, glow8, glow32;
+let rs = 0x2f6e2b1;
+const rnd = () => { rs ^= rs << 13; rs ^= rs >>> 17; rs ^= rs << 5; return (rs >>> 0) / 4294967296; };
+
+function allocGrid(w, h) {
+  GW = w; GH = h;
+  type = new Uint8Array(w * h); aux = new Uint8Array(w * h); shade = new Uint8Array(w * h); mark = new Uint8Array(w * h);
+  pix8 = new Uint8Array(w * h * 4); pix32 = new Uint32Array(pix8.buffer);
+  glow8 = new Uint8Array(w * h * 4); glow32 = new Uint32Array(glow8.buffer);
+}
+function put(i, t, a) {
+  type[i] = t; aux[i] = a | 0; shade[i] = (rnd() * 256) | 0; mark[i] = tick;
+}
+function swap(i, j) {
+  const t = type[i], a = aux[i], s = shade[i];
+  type[i] = type[j]; aux[i] = aux[j]; shade[i] = shade[j];
+  type[j] = t; aux[j] = a; shade[j] = s;
+  mark[i] = mark[j] = tick;
+}
+const isGas = t => t === STEAM || t === SMOKE || t === FIRE;
+const isLiquid = t => t === WATER || t === OIL || t === ACID || t === LAVA;
+
+function ignite(j) {
+  const t = type[j];
+  if (t === POWDER) { put(j, BOOM, 4 + ((rnd() * 3) | 0)); return; }
+  put(j, EMBER, BURN[t] + ((rnd() * BURN[t] * 0.6) | 0));
+}
+// まわり 8 マスに火を移す。水があれば消える（true を返す）
+function burnAround(i, x, y, k) {
+  for (let dy = -1; dy <= 1; dy++) {
+    const yy = y + dy;
+    if (yy < 0 || yy >= GH) continue;
+    for (let dx = -1; dx <= 1; dx++) {
+      const xx = x + dx;
+      if ((!dx && !dy) || xx < 0 || xx >= GW) continue;
+      const j = yy * GW + xx, t = type[j];
+      if (t === EMPTY) continue;
+      if (t === WATER) { if (rnd() < 0.5) { put(j, STEAM, 120 + rnd() * 100); return true; } continue; }
+      const f = FLAM[t];
+      if (f > 0 && rnd() < f * k) ignite(j);
+    }
+  }
+  return false;
+}
+let shake = 0;
+function explode(x, y, r) {
+  shake = Math.min(1, shake + 0.35);
+  for (let dy = -r; dy <= r; dy++) {
+    const yy = y + dy;
+    if (yy < 0 || yy >= GH) continue;
+    for (let dx = -r; dx <= r; dx++) {
+      const xx = x + dx, d2 = dx * dx + dy * dy;
+      if (xx < 0 || xx >= GW || d2 > r * r) continue;
+      const j = yy * GW + xx, t = type[j];
+      if (t === WALL || t === BOOM) continue;
+      if (t === POWDER) { put(j, BOOM, 3 + ((rnd() * 3) | 0)); mark[j] = tick; continue; }
+      if (rnd() < 0.85 - 0.4 * d2 / (r * r)) put(j, FIRE, 5 + rnd() * 14);
+      else if (t !== STONE) put(j, rnd() < 0.3 ? SMOKE : EMPTY, 40 + rnd() * 50);
+    }
+  }
+}
+
+function powder(i, x, y, d, diag) {
+  if (y + 1 >= GH) return;
+  const b = i + GW;
+  if (DENS[type[b]] < d) { swap(i, b); return; }
+  if (!diag) return;
+  const dir = rnd() < 0.5 ? -1 : 1;
+  for (let k = 0; k < 2; k++) {
+    const sx = x + (k ? -dir : dir);
+    if (sx < 0 || sx >= GW) continue;
+    const j = b + (k ? -dir : dir);
+    if (DENS[type[j]] < d && DENS[type[i + (k ? -dir : dir)]] < d) { swap(i, j); return; }
+  }
+}
+function liquid(i, x, y, d, spread) {
+  if (y + 1 < GH) {
+    const b = i + GW;
+    if (DENS[type[b]] < d) { swap(i, b); return; }
+    const dir0 = rnd() < 0.5 ? -1 : 1;
+    for (let k = 0; k < 2; k++) {
+      const dir = k ? -dir0 : dir0, sx = x + dir;
+      if (sx < 0 || sx >= GW) continue;
+      if (DENS[type[b + dir]] < d && DENS[type[i + dir]] < 2) { swap(i, b + dir); return; }
+    }
+  }
+  // 横へ：同じ向きに流れ続け、ぶつかったら向きを変える
+  let dir = (aux[i] & 1) ? 1 : -1;
+  for (let k = 0; k < 2; k++) {
+    let j = i, n = 0;
+    while (n < spread) {
+      const sx = x + dir * (n + 1);
+      if (sx < 0 || sx >= GW || DENS[type[j + dir]] >= 2) break;
+      j += dir; n++;
+      if (y + 1 < GH && DENS[type[j + GW]] < d) break;   // 落ちられる所があればそこで止まる
+    }
+    if (n > 0) { aux[i] = (aux[i] & 254) | (dir > 0 ? 1 : 0); swap(i, j); return; }
+    dir = -dir;
+  }
+  aux[i] ^= 1;
+}
+function gas(i, x, y, bubble) {
+  if (y === 0) { type[i] = EMPTY; return; }
+  const r = rnd();
+  const dx = r < 0.25 ? -1 : r < 0.5 ? 1 : 0;
+  const sx = x + dx;
+  if (sx >= 0 && sx < GW) {
+    const j = i - GW + dx, t = type[j];
+    if (t === EMPTY || (bubble && isLiquid(t) && t !== LAVA)) { swap(i, j); return; }
+  }
+  const side = rnd() < 0.5 ? -1 : 1, s2 = x + side;
+  if (s2 >= 0 && s2 < GW && type[i + side] === EMPTY && rnd() < 0.5) swap(i, i + side);
+}
+
+function update() {
+  tick = (tick % 250) + 1;
+  const ltr = (tick & 1) === 0;
+  for (let y = GH - 1; y >= 0; y--) {
+    for (let k = 0; k < GW; k++) {
+      const x = ltr ? k : GW - 1 - k;
+      const i = y * GW + x, t = type[i];
+      if (t === EMPTY || t === WALL || mark[i] === tick) continue;
+      switch (t) {
+        case SAND: powder(i, x, y, 7, true); break;
+        case POWDER: powder(i, x, y, 7, true); break;
+        case STONE: powder(i, x, y, 7, false); break;
+        case WATER: liquid(i, x, y, 4, 5); break;
+        case OIL: liquid(i, x, y, 3, 3); break;
+        case ACID: {
+          // まわりを溶かす。溶かしたぶん自分も減る
+          const dirs = [-1, 1, -GW, GW], j = i + dirs[(rnd() * 4) | 0];
+          const jx = j % GW;
+          if (j >= 0 && j < GW * GH && Math.abs(jx - x) <= 1) {
+            const n = type[j];
+            if (n !== EMPTY && n !== ACID && n !== WALL && !isGas(n) && n !== LAVA && rnd() < 0.12) {
+              put(j, rnd() < 0.3 ? SMOKE : EMPTY, 40);
+              if (rnd() < 0.6) { put(i, EMPTY, 0); break; }
+            }
+          }
+          liquid(i, x, y, 4, 4);
+          break;
+        }
+        case LAVA: {
+          let cooled = false;
+          for (let d = 0; d < 4 && !cooled; d++) {
+            const j = i + (d === 0 ? -1 : d === 1 ? 1 : d === 2 ? -GW : GW);
+            if (j < 0 || j >= GW * GH || (d < 2 && ((j / GW) | 0) !== y)) continue;
+            const n = type[j];
+            if (n === WATER) { put(j, STEAM, 140 + rnd() * 100); if (rnd() < 0.7) { put(i, STONE, 0); cooled = true; } }
+            else if (FLAM[n] > 0 && rnd() < FLAM[n] * 1.5) ignite(j);
+          }
+          if (cooled) break;
+          if (rnd() < 0.006 && y > 0 && type[i - GW] === EMPTY) put(i - GW, SMOKE, 30 + rnd() * 40);
+          if (rnd() < 0.45) liquid(i, x, y, 6, 1); else mark[i] = tick;
+          break;
+        }
+        case FIRE: {
+          if (aux[i] <= 1) { if (rnd() < 0.18) put(i, SMOKE, 40 + rnd() * 60); else type[i] = EMPTY; break; }
+          aux[i]--;
+          if (burnAround(i, x, y, 0.6)) { put(i, STEAM, 100 + rnd() * 80); break; }
+          if (rnd() < 0.75) gas(i, x, y, false);
+          break;
+        }
+        case EMBER: {
+          if (aux[i] <= 1) { if (rnd() < 0.35) put(i, SMOKE, 50 + rnd() * 70); else type[i] = EMPTY; break; }
+          aux[i]--;
+          if (burnAround(i, x, y, 1)) { put(i, SMOKE, 60 + rnd() * 60); break; }
+          if (y > 0 && type[i - GW] === EMPTY && rnd() < 0.4) put(i - GW, FIRE, 6 + rnd() * 12);
+          break;
+        }
+        case BOOM: explode(x, y, aux[i]); put(i, FIRE, 8 + rnd() * 10); break;
+        case STEAM: {
+          if (aux[i] <= 1) { if (rnd() < 0.55) put(i, WATER, 0); else type[i] = EMPTY; break; }
+          if ((tick & 1) === 0) aux[i]--;
+          gas(i, x, y, true);
+          break;
+        }
+        case SMOKE: {
+          if (aux[i] <= 1) { type[i] = EMPTY; break; }
+          aux[i]--;
+          if (rnd() < 0.7) gas(i, x, y, false);
+          break;
+        }
+        case PLANT: {
+          // 隣の水を吸って、そこへ伸びる
+          if (rnd() < 0.06) {
+            const d = (rnd() * 4) | 0, j = i + (d === 0 ? -1 : d === 1 ? 1 : d === 2 ? -GW : GW);
+            if (j >= 0 && j < GW * GH && (d >= 2 || ((j / GW) | 0) === y) && type[j] === WATER && rnd() < 0.5) put(j, PLANT, 0);
+          }
+          break;
+        }
+        case SEED: {
+          if (y + 1 >= GH || (DENS[type[i + GW]] >= 7 && type[i + GW] !== SEED)) {
+            if (rnd() < 0.04) { type[i] = SPROUT; aux[i] = 7 + ((rnd() * 16) | 0); mark[i] = tick; }
+            break;
+          }
+          powder(i, x, y, 7, true);
+          break;
+        }
+        case SPROUT: {
+          if (rnd() > 0.22) break;
+          const h = aux[i], col = shade[i];
+          let nx = x + (rnd() < 0.22 ? (rnd() < 0.5 ? -1 : 1) : 0);
+          if (nx < 0 || nx >= GW) nx = x;
+          const j = (y - 1) * GW + nx;
+          const free = y > 1 && (type[j] === EMPTY || type[j] === WATER || type[j] === STEAM || type[j] === SMOKE);
+          if (h <= 0 || !free) {
+            // 咲く
+            const c = col % 5;
+            for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+              const xx = x + dx, yy = y + dy;
+              if (xx < 0 || xx >= GW || yy < 0 || yy >= GH || (dx && dy && rnd() < 0.5)) continue;
+              const q = yy * GW + xx;
+              if (dx === 0 && dy === 0) { type[q] = FLOWER; shade[q] = 5; mark[q] = tick; }
+              else if (type[q] === EMPTY || isGas(type[q])) { type[q] = FLOWER; shade[q] = c; aux[q] = 0; mark[q] = tick; }
+            }
+            break;
+          }
+          type[i] = PLANT; shade[i] = (rnd() * 256) | 0;
+          type[j] = SPROUT; aux[j] = h - 1; shade[j] = col; mark[j] = tick;
+          if (rnd() < 0.3) {      // 葉
+            const side = rnd() < 0.5 ? -1 : 1, lx = x + side;
+            if (lx >= 0 && lx < GW && type[i + side] === EMPTY) put(i + side, PLANT, 0);
+          }
+          break;
+        }
+      }
+    }
+  }
+}
+
+// ---------- 色 ----------
+// 素材ごとに 8 通りの濃淡。アルファには「自分で光る強さ」を入れる
+const PAL = new Uint32Array(19 * 8);
+function rgb(r, g, b, e) { return ((e || 0) << 24 | (b & 255) << 16 | (g & 255) << 8 | (r & 255)) >>> 0; }
+function ramp(t, r, g, b, v, e) {
+  for (let k = 0; k < 8; k++) {
+    const m = 1 + (k / 7 - 0.5) * v;
+    PAL[t * 8 + k] = rgb(Math.min(255, r * m), Math.min(255, g * m), Math.min(255, b * m), e);
+  }
+}
+ramp(WALL, 104, 104, 116, 0.16); ramp(SAND, 219, 184, 110, 0.26); ramp(WATER, 52, 118, 218, 0.2);
+ramp(PLANT, 62, 168, 78, 0.5); ramp(OIL, 84, 58, 44, 0.3); ramp(STONE, 92, 88, 98, 0.3);
+ramp(STEAM, 120, 138, 162, 0.2); ramp(SMOKE, 58, 56, 62, 0.3); ramp(POWDER, 56, 54, 60, 0.6);
+ramp(ACID, 150, 240, 50, 0.2, 70); ramp(SEED, 190, 150, 88, 0.3); ramp(WOOD, 124, 82, 46, 0.3);
+ramp(SPROUT, 150, 230, 110, 0.1); ramp(LAVA, 255, 96, 24, 0.35, 215); ramp(BOOM, 255, 255, 230, 0, 255);
+const FLOWERS = [rgb(255, 111, 174, 26), rgb(255, 210, 63, 26), rgb(245, 240, 230, 26), rgb(164, 123, 255, 26), rgb(255, 77, 77, 26), rgb(255, 196, 40, 50)];
+const FIRE_RAMP = new Uint32Array(32);
+for (let k = 0; k < 32; k++) {
+  const t = k / 31;      // 0 = 消えかけ（赤黒）→ 1 = 生まれたて（白黄）
+  FIRE_RAMP[k] = rgb(120 + 135 * Math.min(1, t * 2.2), 20 + 220 * Math.pow(t, 1.3), 10 + 190 * Math.pow(t, 3), 120 + 135 * t);
+}
+function paint() {
+  const n = GW * GH, w = (tick >> 2);
+  for (let i = 0; i < n; i++) {
+    const t = type[i];
+    let c = 0;
+    if (t !== EMPTY) {
+      if (t === FIRE) c = FIRE_RAMP[Math.min(31, aux[i] * 2 + (shade[i] & 3))];
+      else if (t === EMBER) c = FIRE_RAMP[Math.min(31, 14 + (aux[i] >> 2) + ((shade[i] + tick) & 7))];
+      else if (t === FLOWER) c = FLOWERS[shade[i] % 6];
+      else if (t === WATER || t === LAVA || t === ACID) c = PAL[t * 8 + ((shade[i] + w + (i % GW) * 3) & 7)];
+      else if (t === WALL) c = PAL[8 + (((i % GW) >> 2) + ((i / GW) >> 1) * 3 & 7)];
+      else if (t === WOOD) c = PAL[WOOD * 8 + (((i % GW) * 5 + (shade[i] & 1)) & 7)];
+      else c = PAL[t * 8 + (shade[i] & 7)];
+    }
+    pix32[i] = c;
+    // 光る素材だけを別のテクスチャへ（これをぼかして重ねる）
+    const e = c >>> 24;
+    glow32[i] = e ? rgb((c & 255) * e >> 8, (c >> 8 & 255) * e >> 8, (c >> 16 & 255) * e >> 8, 255) : 0xff000000;
+  }
+}
+
+// ---------- 表示 ----------
+const canvas = document.getElementById('c');
+const G = Kit.initGL(canvas);
+if (!G) { Kit.fail(); throw new Error('no webgl2'); }
+const gl = G.gl;
+const FS = `#version 300 es
+precision highp float;
+in vec2 vUv; out vec4 o;
+uniform sampler2D uTex, uGlow;
+uniform vec2 uGrid, uShake;
+uniform float uBit;
+const float BAYER[16] = float[16](0., 8., 2., 10., 12., 4., 14., 6., 3., 11., 1., 9., 15., 7., 13., 5.);
+vec3 lin(vec3 c) { return c * c * (c * 0.305306011 + 0.682171111) + c * 0.012522878; }
+void main() {
+  vec2 uv = vec2(vUv.x, 1.0 - vUv.y) + uShake;
+  vec4 c = texture(uTex, uv);
+  vec3 col = lin(c.rgb);
+  bool empty = c.r + c.g + c.b == 0.0;
+  if (empty) col = mix(vec3(0.0045, 0.0045, 0.006), vec3(0.008, 0.009, 0.014), uv.y);
+  // 光のにじみ：縮小テクスチャ（ミップ）を何段か重ねる
+  vec2 px = 1.0 / uGrid;
+  vec3 g = vec3(0.0);
+  g += textureLod(uGlow, uv, 1.0).rgb * 0.35;
+  g += textureLod(uGlow, uv + px * 1.5, 2.5).rgb * 0.45;
+  g += textureLod(uGlow, uv - px * 3.0, 4.0).rgb * 0.6;
+  g += textureLod(uGlow, uv + px * vec2(-5.0, 5.0), 5.2).rgb * 0.7;
+  g = lin(g);
+  col = col * (1.0 + 0.9 * c.a) + g * (empty ? 1.5 : 0.9) + col * g * 5.0;
+  if (uBit > 0.5) {
+    // 1bit モード：Endless Stair と同じ 4×4 ベイヤーのディザ
+    ivec2 cell = ivec2(floor(uv * uGrid));
+    float th = (BAYER[(cell.y & 3) * 4 + (cell.x & 3)] + 0.5) / 16.0;
+    float l = smoothstep(0.16, 0.92, pow(clamp(dot(col, vec3(0.3, 0.55, 0.15)) * 1.35, 0.0, 1.0), 0.42));
+    col = l > th ? vec3(0.887, 0.863, 0.791) : vec3(0.0033, 0.0033, 0.004);
+  } else {
+    col = clamp((col * (2.51 * col + 0.03)) / (col * (2.43 * col + 0.59) + 0.14), 0.0, 1.0);
+  }
+  o = vec4(pow(col, vec3(1.0 / 2.2)), 1.0);
+}`;
+const prog = G.program(FS);
+const tex = gl.createTexture(), glowTex = gl.createTexture();
+function setupTex() {
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.bindTexture(gl.TEXTURE_2D, glowTex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+}
+setupTex();
+const opt = { bit: false, paused: false, tool: SAND, size: 3 };
+function render() {
+  paint();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  Kit.fit(canvas, dpr);
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, GW, GH, 0, gl.RGBA, gl.UNSIGNED_BYTE, pix8);
+  gl.bindTexture(gl.TEXTURE_2D, glowTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, GW, GH, 0, gl.RGBA, gl.UNSIGNED_BYTE, glow8);
+  gl.generateMipmap(gl.TEXTURE_2D);
+  const u = prog.use();
+  G.bind(null);
+  G.tex(0, tex, u.uTex);
+  G.tex(1, glowTex, u.uGlow);
+  gl.uniform2f(u.uGrid, GW, GH);
+  const s = Kit.reduced ? 0 : shake * shake * 0.012;
+  gl.uniform2f(u.uShake, (Math.random() - 0.5) * s, (Math.random() - 0.5) * s);
+  gl.uniform1f(u.uBit, opt.bit ? 1 : 0);
+  G.draw();
+}
+
+// ---------- 最初の風景 ----------
+function fill(x0, y0, x1, y1, t) {
+  for (let y = Math.max(0, y0 | 0); y <= Math.min(GH - 1, y1 | 0); y++)
+    for (let x = Math.max(0, x0 | 0); x <= Math.min(GW - 1, x1 | 0); x++) put(y * GW + x, t, 0);
+}
+function scene() {
+  type.fill(0); aux.fill(0); mark.fill(0);
+  const w = GW, h = GH;
+  // 砂の地面（ゆるい丘）と、まんなかの池
+  for (let x = 0; x < w; x++) {
+    const u = x / w;
+    const top = h * (0.84 - 0.05 * Math.sin(u * 6.3 + 0.6) - 0.03 * Math.sin(u * 15 + 2) + 0.07 * Math.exp(-Math.pow((u - 0.52) / 0.13, 2)));
+    for (let y = top | 0; y < h; y++) put(y * w + x, y > h * 0.94 ? STONE : SAND, 0);
+  }
+  for (let x = (w * 0.38) | 0; x < w * 0.66; x++) for (let y = (h * 0.855) | 0; y < h; y++) {
+    const i = y * w + x;
+    if (type[i] === EMPTY) put(i, WATER, 0);
+  }
+  // 左：木（幹と葉）
+  const tx = (w * 0.2) | 0, ty = (h * 0.8) | 0, th = Math.round(h * 0.13);
+  fill(tx - 1, ty - th, tx + 1, ty + 4, WOOD);
+  for (let dy = -9; dy <= 6; dy++) for (let dx = -11; dx <= 11; dx++) {
+    if (dx * dx / 121 + dy * dy / 64 < 1 - rnd() * 0.3) {
+      const x = tx + dx, y = ty - th - 4 + dy;
+      if (x >= 0 && x < w && y >= 0 && type[y * w + x] === EMPTY) put(y * w + x, PLANT, 0);
+    }
+  }
+  // 右：石の火口に溶岩
+  const vx = (w * 0.82) | 0;
+  let vy = 0;
+  while (vy < h - 1 && type[vy * w + vx] === EMPTY) vy++;
+  vy += 5;
+  for (let dy = 0; dy < 22; dy++) for (let dx = -dy - 3; dx <= dy + 3; dx++) {
+    const x = vx + dx, y = vy - 21 + dy;
+    if (x < 0 || x >= w || y < 0 || y >= h) continue;
+    put(y * w + x, Math.abs(dx) < 3 + dy * 0.28 && dy < 17 ? LAVA : STONE, 0);
+  }
+  // 宙に浮いた棚：火薬をのせた木の板、花の種
+  const sy = (h * 0.5) | 0;
+  fill(w * 0.52, sy, w * 0.7, sy + 1, WOOD);
+  fill(w * 0.55, sy - 3, w * 0.67, sy - 1, POWDER);
+  fill(w * 0.06, h * 0.42, w * 0.3, h * 0.42 + 1, WALL);
+  fill(w * 0.06, h * 0.42 - 5, w * 0.06 + 1, h * 0.42, WALL);
+  fill(w * 0.3 - 1, h * 0.42 - 5, w * 0.3, h * 0.42, WALL);
+  fill(w * 0.08, h * 0.42 - 4, w * 0.28, h * 0.42 - 1, WATER);
+  for (let k = 0; k < 7; k++) put(((h * 0.7) | 0) * w + ((w * (0.3 + 0.045 * k)) | 0), SEED, 0);
+}
+
+// ---------- 描く ----------
+const SOLID = t => t === WALL || t === WOOD || t === PLANT;
+function dab(cx, cy, t, r) {
+  for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+    if (dx * dx + dy * dy > r * r + 0.5) continue;
+    const x = cx + dx, y = cy + dy;
+    if (x < 0 || x >= GW || y < 0 || y >= GH) continue;
+    const i = y * GW + x;
+    if (t === EMPTY) { type[i] = EMPTY; continue; }
+    if (t === WALL) { put(i, WALL, 0); continue; }
+    if (type[i] !== EMPTY && !(t === FIRE && FLAM[type[i]] > 0)) continue;
+    if (t === FIRE) { if (type[i] !== EMPTY) ignite(i); else if (rnd() < 0.6) put(i, FIRE, 14 + rnd() * 16); continue; }
+    if (t === SEED) { if (rnd() < 0.06) put(i, SEED, 0); continue; }
+    if (SOLID(t) || rnd() < 0.55) put(i, t, t === STEAM ? 200 : 0);
+  }
+}
+function stroke(x0, y0, x1, y1, t, r) {
+  const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0), 1);
+  for (let k = 0; k <= n; k++) dab(Math.round(x0 + (x1 - x0) * k / n), Math.round(y0 + (y1 - y0) * k / n), t, r);
+}
+const pens = new Map();
+function cellAt(e) {
+  const r = canvas.getBoundingClientRect();
+  return [Math.floor((e.clientX - r.left) / r.width * GW), Math.floor((e.clientY - r.top) / r.height * GH)];
+}
+canvas.addEventListener('pointerdown', e => {
+  canvas.setPointerCapture(e.pointerId);
+  const [x, y] = cellAt(e);
+  pens.set(e.pointerId, { x, y });
+  dab(x, y, opt.tool, opt.size);
+});
+canvas.addEventListener('pointermove', e => {
+  const p = pens.get(e.pointerId);
+  if (!p) return;
+  const [x, y] = cellAt(e);
+  stroke(p.x, p.y, x, y, opt.tool, opt.size);
+  p.x = x; p.y = y;
+});
+const lift = e => pens.delete(e.pointerId);
+canvas.addEventListener('pointerup', lift);
+canvas.addEventListener('pointercancel', lift);
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+// ---------- UI ----------
+const ui = Kit.chrome({
+  title: 'DUSTBOX', sub: 'なぞって描く箱庭', canvas, name: 'dustbox', center: false,
+  text: '砂・水・火・溶岩・火薬…なぞるだけで動きだす箱庭 #DUSTBOX #KanataLab',
+  onSnap: () => Kit.snap(canvas, { render, name: 'dustbox', label: 'DUSTBOX — KANATA LAB' }),
+});
+const TOOLS = [
+  [SAND, '砂', '#dbb86e'], [WATER, '水', '#3476da'], [FIRE, '火', '#ff7a1a'], [SEED, '種', '#ff6fae'], [POWDER, '火薬', '#55535c'],
+  [LAVA, '溶岩', '#ff5a18'], [OIL, '油', '#6b4a38'], [WOOD, '木', '#7c522e'], [PLANT, '草', '#3ea84e'], [ACID, '酸', '#96f032'],
+  [STONE, '石', '#5c5862'], [STEAM, '蒸気', '#8c9cb4'], [WALL, '壁', '#68687a'], [EMPTY, '消す', '#0b0b0d'],
+];
+const row1 = Kit.el('div', { class: 'row', role: 'radiogroup', 'aria-label': '素材' });
+const row2 = Kit.el('div', { class: 'row' });
+ui.bar.append(row1, row2);
+const toolBtns = [];
+for (const [t, label, col] of TOOLS) {
+  const b = Kit.el('button', { class: 'k-btn tool' + (t === opt.tool ? ' on' : ''), role: 'radio', 'aria-checked': String(t === opt.tool) }, `<i style="background:${col}"></i>${label}`);
+  b.addEventListener('click', () => {
+    opt.tool = t;
+    toolBtns.forEach(x => { x.classList.toggle('on', x === b); x.setAttribute('aria-checked', String(x === b)); });
+  });
+  toolBtns.push(b); row1.appendChild(b);
+}
+const sizeBtns = [];
+for (const [r, d] of [[1, 5], [3, 9], [6, 14]]) {
+  const b = Kit.el('button', { class: 'k-btn mini' + (r === opt.size ? ' on' : ''), 'aria-label': `筆の太さ ${r}` }, `<span class="dot" style="width:${d}px;height:${d}px"></span>`);
+  b.addEventListener('click', () => { opt.size = r; sizeBtns.forEach(x => x.classList.toggle('on', x === b)); });
+  sizeBtns.push(b); row2.appendChild(b);
+}
+row2.appendChild(Kit.el('span', { class: 'sp' }));
+const mk = (label, fn, toggle) => {
+  const b = Kit.el('button', { class: 'k-btn mini' }, label);
+  b.addEventListener('click', () => { if (toggle) b.classList.toggle('on'); fn(b.classList.contains('on')); });
+  row2.appendChild(b);
+  return b;
+};
+mk('1bit', v => { opt.bit = v; if (v) Kit.hint('Endless Stair と同じ白黒ディザで表示'); }, true);
+mk('止める', v => { opt.paused = v; }, true);
+mk('リセット', () => scene());
+mk('全消し', () => { type.fill(0); aux.fill(0); });
+
+// ---------- 画面の大きさ ----------
+let lastW = 0, lastH = 0;
+function layout(force) {
+  const barH = ui.bar.getBoundingClientRect().height;
+  const cw = window.innerWidth, chh = Math.max(120, window.innerHeight - barH);
+  canvas.style.height = chh + 'px';
+  // スマホのアドレスバーの出入りくらいでは作り直さない
+  if (!force && cw === lastW && Math.abs(chh - lastH) < 130) return;
+  lastW = cw; lastH = chh;
+  const gw = Kit.clamp(Math.round(cw / 2.4), 120, 300);
+  allocGrid(gw, Math.max(60, Math.round(gw * chh / cw)));
+  scene();
+}
+window.addEventListener('resize', () => layout(false));
+
+let prevNow = 0, acc = 0;
+function frame(now) {
+  const dt = prevNow ? Math.min(50, now - prevNow) : 16;
+  prevNow = now;
+  acc += dt / (1000 / 60);
+  let steps = Math.min(2, Math.floor(acc));
+  acc -= steps;
+  for (const p of pens.values()) dab(p.x, p.y, opt.tool, opt.size);   // 押しっぱなしでも出続ける
+  if (!opt.paused) while (steps-- > 0) update();
+  shake *= 0.86;
+  render();
+  requestAnimationFrame(frame);
+}
+layout(true);
+requestAnimationFrame(frame);
+setTimeout(() => Kit.hint('下の素材を選んで、画面をなぞる。まずは溶岩の横に「水」、木に「火」'), 900);
+window.__lab = { opt, dab, stroke, update, scene, get GW() { return GW; }, get GH() { return GH; }, E: { SAND, WATER, FIRE, SEED, POWDER, LAVA, OIL, WOOD, PLANT, ACID } };
+</script>
+</body>
+</html>
