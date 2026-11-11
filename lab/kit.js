@@ -364,7 +364,18 @@ const Kit = (() => {
         },
       }, 'シェア'));
     }
-    row.appendChild(el('a', { class: 'k-btn' + (canShare ? '' : ' on'), href: url, download: name }, '保存'));
+    row.appendChild(el('a', {
+      class: 'k-btn' + (canShare ? '' : ' on'), href: url, download: name,
+      onclick: e => {
+        // claude.ai のアーティファクトとして開かれているときは、ページからの直接ダウンロードが止められている。
+        // その場合だけ、用意されている保存の窓口を使う（ふつうのブラウザでは何もしない）
+        if (!(window.claude && typeof window.claude.use === 'function')) return;
+        e.preventDefault();
+        window.claude.use('downloads')
+          .then(d => { if (!d) throw new Error('unavailable'); return d.save({ filename: name, data: blob }); })
+          .catch(() => hint('ここでは保存できませんでした。画像を長押しして保存してください'));
+      },
+    }, '保存'));
     row.appendChild(el('button', { class: 'k-btn', onclick: close }, '閉じる'));
     card.appendChild(row);
     if (!canShare) card.appendChild(el('p', null, isVideo ? '保存した動画をそのまま SNS に投稿できます' : '保存した画像をそのまま SNS に投稿できます'));
@@ -432,7 +443,7 @@ const Kit = (() => {
   // 上バー（戻る・題名・撮影・録画）と下の操作列を作る
   function chrome(o) {
     const top = el('div', { class: 'k-top' });
-    top.appendChild(el('a', { class: 'k-btn', href: './', 'aria-label': 'ラボの一覧に戻る' }, ICON.back));
+    top.appendChild(el('a', { class: 'k-btn', href: 'index.html', 'aria-label': 'ラボの一覧に戻る' }, ICON.back));
     top.appendChild(el('div', { class: 'k-title' }, `<b>${o.title}</b><span>${o.sub || ''}</span>`));
     const shot = el('button', { class: 'k-btn', 'aria-label': '画像を撮る', onclick: () => o.onSnap && o.onSnap() }, ICON.cam);
     top.appendChild(shot);

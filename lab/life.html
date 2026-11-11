@@ -359,7 +359,7 @@ function apply(newCode, rescatter) {
   if (rescatter) scatter(code);
   for (let i = 0; i < N; i++) if (sp[i] >= U.K) sp[i] = i % U.K;
   subEl.textContent = `宇宙 #${tag(code)} ・ ${U.K} 種 ・ ${N.toLocaleString()} 粒`;
-  history.replaceState(null, '', '#' + code);
+  try { history.replaceState(null, '', '#' + code); } catch (e) { /* 埋め込み表示などで書き換えられない場合は何もしない */ }
   if (opt.rules) drawRules();
   return true;
 }

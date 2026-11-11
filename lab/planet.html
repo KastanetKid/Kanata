@@ -789,7 +789,7 @@ function show(name, push) {
   if (push) {
     const u = new URL(location.href);
     u.searchParams.set('n', P.name);
-    history.replaceState(null, '', u);
+    try { history.replaceState(null, '', u); } catch (e) { /* 埋め込み表示などで書き換えられない場合は何もしない */ }
   }
   layout();
 }
