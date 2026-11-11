@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b0b0d">
+<title>EVENT HORIZON — Kanata Lab</title>
+<meta name="description" content="ブラウザの中で、光が曲がる。一般相対論の測地線を 1 ピクセルごとに解くブラックホール。">
+<meta property="og:title" content="EVENT HORIZON — Kanata Lab">
+<meta property="og:description" content="ブラウザの中で、光が曲がる。一般相対論の測地線を 1 ピクセルごとに解くブラックホール。">
+<meta property="og:image" content="https://kastanetkid.github.io/Kanata/lab/img/blackhole.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="kit.css">
+<style>
+  #read {
+    position: fixed; z-index: 15; left: 12px; bottom: calc(var(--sb) + 70px);
+    font-size: 11px; line-height: 1.75; letter-spacing: .06em; color: var(--dim);
+    text-shadow: 0 0 4px #000, 0 0 2px #000; pointer-events: none; font-variant-numeric: tabular-nums;
+  }
+  #read b { color: var(--ink); font-weight: 600; }
+</style>
+</head>
+<body>
+<canvas id="c" class="stage" tabindex="0" aria-label="ブラックホールの描画。ドラッグで視点を回し、ピンチまたはホイールで距離を変える"></canvas>
+<div id="read" aria-live="off"></div>
+<script src="kit.js"></script>
+<script>
+'use strict';
+// EVENT HORIZON
+// 回転していないブラックホール（シュヴァルツシルト解）のまわりで光がどう曲がるかを、
+// 画面の 1 ピクセルごとに光線を逆向きにたどって描く。長さの単位は r_s（事象の地平線の半径）= 1。
+//
+//   光の道すじ : d²x/dλ² = -(3/2) h² x / r⁵ （h = |x × v| は保存量）。シュヴァルツシルト時空の
+//                光の軌道の形と厳密に一致する式を、リープフロッグ法で積分する
+//   カメラ     : その場に静止している観測者。局所的に見える方向を、座標空間の進行方向に変換してから飛ばす
+//   降着円盤   : r = 3（最内安定円軌道）から外。ガスはケプラー回転（内縁で光速の 50%）
+//   色と明るさ : g = √(1 − 3/2r) / (1 − Ωλ) / √(1 − 1/r_cam)  …… ドップラー効果＋重力赤方偏移の厳密な式。
+//                色温度は g 倍、明るさは g⁴ 倍になる（こちらに向かってくる側が青白く明るい）
+const FS = `#version 300 es
+precision highp float;
+in vec2 vUv;
+out vec4 outColor;
+uniform vec2 uRes;
+uniform float uTime, uFov, uDoppler, uDisk, uFlow, uPix;
+uniform vec3 uCam;
+uniform mat3 uBasis;   // 右・上・前
+
+const float PI = 3.14159265, TAU = 6.2831853;
+const float RIN = 3.0, ROUT = 13.0;
+const int STEPS = 150;
+
+float h11(float p) { p = fract(p * 0.1031); p *= p + 33.33; p *= p + p; return fract(p); }
+float h21(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
+float h31(vec3 p) { p = fract(p * 0.1031); p += dot(p, p.zyx + 31.32); return fract((p.x + p.y) * p.z); }
+vec3 h33(vec3 p) { p = fract(p * vec3(0.1031, 0.1030, 0.0973)); p += dot(p, p.yxz + 33.33); return fract((p.xxy + p.yxx) * p.zyx); }
+
+float vnoise(vec3 x) {
+  vec3 i = floor(x), f = fract(x);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(h31(i), h31(i + vec3(1, 0, 0)), f.x), mix(h31(i + vec3(0, 1, 0)), h31(i + vec3(1, 1, 0)), f.x), f.y),
+             mix(mix(h31(i + vec3(0, 0, 1)), h31(i + vec3(1, 0, 1)), f.x), mix(h31(i + vec3(0, 1, 1)), h31(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
+float fbm3(vec3 p) {
+  float a = 0.5, s = 0.0;
+  for (int i = 0; i < 4; i++) { s += a * vnoise(p); p = p * 2.03 + 17.1; a *= 0.5; }
+  return s;
+}
+// 横方向（角度）に継ぎ目なく繰り返すノイズ
+float pnoise(vec2 x, float per) {
+  vec2 i = floor(x), f = fract(x);
+  f = f * f * (3.0 - 2.0 * f);
+  float i0 = mod(i.x, per), i1 = mod(i.x + 1.0, per);
+  return mix(mix(h21(vec2(i0, i.y)), h21(vec2(i1, i.y)), f.x), mix(h21(vec2(i0, i.y + 1.0)), h21(vec2(i1, i.y + 1.0)), f.x), f.y);
+}
+float diskNoise(float ang, float r) {
+  float u = ang / TAU;
+  float n = 0.0;
+  n += 0.50 * pnoise(vec2(u * 5.0, r * 1.3), 5.0);
+  n += 0.27 * pnoise(vec2(u * 11.0, r * 3.1 + 7.0), 11.0);
+  n += 0.15 * pnoise(vec2(u * 23.0, r * 6.7 + 3.0), 23.0);
+  n += 0.08 * pnoise(vec2(u * 47.0, r * 13.0 + 9.0), 47.0);
+  return n;
+}
+
+// 黒体放射の色（1000K〜40000K の近似）。リニア RGB
+vec3 blackbody(float T) {
+  float t = clamp(T, 1000.0, 40000.0) / 100.0;
+  vec3 c;
+  c.r = t <= 66.0 ? 1.0 : 1.292936 * pow(t - 60.0, -0.1332047592);
+  c.g = t <= 66.0 ? 0.390082 * log(t) - 0.631841 : 1.129891 * pow(t - 60.0, -0.0755148492);
+  c.b = t >= 66.0 ? 1.0 : (t <= 19.0 ? 0.0 : 0.543207 * log(t - 10.0) - 1.196254);
+  c = clamp(c, 0.0, 1.0);
+  return c * c * (c * 0.305306011 + 0.682171111) + c * 0.012522878; // sRGB → リニア
+}
+
+// 星空：方向 d だけで決まる（光が曲がった後の方向で引くので、レンズ効果がそのまま出る）
+vec3 starLayer(vec3 d, float N, float thresh) {
+  vec3 q = d * N, id = floor(q);
+  vec3 col = vec3(0.0);
+  vec3 r = h33(id);
+  if (r.x > thresh) {
+    vec3 sp = normalize(id + 0.3 + 0.4 * h33(id + 7.7));
+    // 星の大きさは 1 ピクセル強（細かすぎるとちらつくので下限をつける）
+    float rad = clamp(1.0 * uPix * N, 0.04, 0.2);
+    float dd = length(d - sp) * N / rad;
+    float mag = pow(r.y, 14.0) * 9.0 + 0.05 + 0.5 * pow(r.y, 4.0);
+    vec3 tint = blackbody(mix(3000.0, 15000.0, r.z * r.z));
+    col = tint * mag * exp(-dd * dd);
+  }
+  return col;
+}
+vec3 sky(vec3 d) {
+  vec3 col = starLayer(d, 30.0, 0.93) * 1.3 + starLayer(d, 70.0, 0.92) * 0.8 + starLayer(d, 150.0, 0.9) * 0.5;
+  // 天の川：傾いた大円に沿う帯
+  vec3 n = normalize(vec3(0.32, 0.86, 0.4));
+  float lat = dot(d, n);
+  float band = exp(-lat * lat * 16.0);
+  float core = exp(-lat * lat * 60.0);
+  vec3 w = d * 3.2 + vec3(4.0, 1.0, 9.0);
+  float cloud = fbm3(w + 0.6 * fbm3(w * 2.1));
+  float dust = smoothstep(0.42, 0.7, fbm3(d * 7.0 + 31.0));
+  float bulge = exp(-pow(max(0.0, 1.0 - dot(d, normalize(vec3(0.8, -0.1, -0.55)))), 1.0) * 5.0);
+  vec3 mw = mix(vec3(0.16, 0.2, 0.36), vec3(0.62, 0.46, 0.3), bulge) * band * (0.25 + 1.5 * cloud * cloud);
+  mw += vec3(0.5, 0.36, 0.22) * core * bulge * 0.9;
+  mw *= 1.0 - 0.75 * dust * core;
+  // 星雲のにじみ
+  float neb = smoothstep(0.55, 0.9, fbm3(d * 1.7 + 50.0));
+  mw += neb * vec3(0.16, 0.03, 0.09) * (0.3 + band);
+  mw += smoothstep(0.6, 0.95, fbm3(d * 2.3 + 80.0)) * vec3(0.02, 0.07, 0.11);
+  return col + mw * 0.9;
+}
+
+void main() {
+  vec2 px = (gl_FragCoord.xy - 0.5 * uRes) / min(uRes.x, uRes.y);
+  vec3 dl = normalize(uBasis * vec3(px * 2.0 * uFov, 1.0));   // 観測者が局所的に見ている方向
+
+  float r0 = length(uCam);
+  vec3 er = uCam / r0;
+  float f0 = 1.0 - 1.0 / r0;
+  float ca = dot(dl, er);
+  float sa = sqrt(max(0.0, 1.0 - ca * ca));
+  vec3 et = sa > 1e-5 ? (dl - ca * er) / sa : vec3(0.0);
+  // 静止観測者の局所角 → 座標空間での進行方向（遠方では一致、地平線の近くでは大きくずれる）
+  float sc = min(1.0, sa / sqrt(f0 + sa * sa / r0));
+  float cc = sqrt(1.0 - sc * sc) * (ca < 0.0 ? -1.0 : 1.0);
+  vec3 v = cc * er + sc * et;
+  vec3 p = uCam;
+
+  vec3 hv = cross(p, v);
+  float h2 = dot(hv, hv);
+  float b = r0 * sa / sqrt(f0);                       // 無限遠での衝突径数
+  float lam = h2 > 1e-10 ? -b * hv.y / sqrt(h2) : 0.0; // 円盤の軸まわりの角運動量 / エネルギー
+
+  vec3 col = vec3(0.0);
+  float trans = 1.0;
+  bool captured = true;
+  float esc = max(42.0, r0 + 2.0);
+  float r2 = dot(p, p);
+  vec3 a = -1.5 * h2 * p / (r2 * r2 * sqrt(r2));
+  float flowT = uTime * uFlow;
+  for (int i = 0; i < STEPS; i++) {
+    float r = sqrt(r2);
+    float dt = clamp(0.1 * (r - 0.6), 0.02, 4.0);
+    v += a * (0.5 * dt);
+    vec3 pn = p + v * dt;
+    if (uDisk > 0.5 && p.y * pn.y < 0.0) {
+      // 円盤の面（y = 0）を横切った
+      vec3 c = mix(p, pn, p.y / (p.y - pn.y));
+      float rc = length(c.xz);
+      if (rc > RIN && rc < ROUT) {
+        float x = rc / RIN;
+        float F = (1.0 - sqrt(1.0 / x)) / (x * x * x) / 0.0567;   // 標準円盤の放射流束（最大値で正規化）
+        float T = pow(F, 0.25);
+        float om = sqrt(0.5 / (rc * rc * rc));
+        float g = sqrt(1.0 - 1.5 / rc) / (1.0 - om * lam) / sqrt(f0);
+        g = mix(1.0, g, uDoppler);
+        // 模様：ガスと一緒に回る。巻き込みすぎないよう 2 つの位相を入れ替えながら流す
+        float ang = atan(c.z, c.x);
+        const float PERIOD = 46.0;
+        float ph1 = fract(flowT / PERIOD), ph2 = fract(flowT / PERIOD + 0.5);
+        float n1 = diskNoise(ang + om * (ph1 - 0.5) * PERIOD * 2.2, rc + floor(flowT / PERIOD) * 3.7);
+        float n2 = diskNoise(ang + om * (ph2 - 0.5) * PERIOD * 2.2 + 2.1, rc + floor(flowT / PERIOD + 0.5) * 5.3 + 11.0);
+        float n = mix(n1, n2, abs(ph1 - 0.5) * 2.0);
+        float streak = smoothstep(0.22, 0.78, n);
+        float dens = (0.35 + 0.65 * streak) * smoothstep(ROUT, ROUT * 0.62, rc) * smoothstep(RIN, RIN * 1.12, rc);
+        float I = pow(F, 0.62) * (0.25 + 1.6 * streak * streak) * g * g * g * g;
+        // 深い所では何もかもが青く・眩しくなる。真っ白に飛ばないよう、目が慣れたぶんだけ露出を下げる
+        vec3 e = blackbody(T * g * 6000.0) * I * 1.35 * pow(f0, 1.75);
+        float al = clamp(dens * 0.92, 0.0, 1.0);
+        col += trans * e * al;
+        trans *= 1.0 - al;
+      }
+    }
+    p = pn;
+    r2 = dot(p, p);
+    a = -1.5 * h2 * p / (r2 * r2 * sqrt(r2));
+    v += a * (0.5 * dt);
+    if (r2 < 1.0) break;                                   // 地平線の内側へ：もう出てこない
+    if (r2 > esc * esc && dot(p, v) > 0.0) { captured = false; break; }
+    if (trans < 0.01) break;
+  }
+  if (!captured && trans > 0.01) {
+    vec3 s = sky(normalize(v));
+    // 深い所ほど空は青く明るく見える（重力による青方偏移。見やすさのため控えめに）
+    float gb = 1.0 / sqrt(f0);
+    s *= mix(vec3(1.0), vec3(0.75, 0.95, 1.35), clamp((gb - 1.0) * 0.5, 0.0, 1.0)) * min(gb, 2.2);
+    col += trans * s;
+  }
+  outColor = vec4(col, 1.0);
+}`;
+
+const canvas = document.getElementById('c');
+const G = Kit.initGL(canvas);
+if (!G) { Kit.fail(); throw new Error('no webgl2'); }
+const gl = G.gl;
+const prog = G.program(FS);
+const bloom = Kit.Bloom(G, 6);
+const params = new URLSearchParams(location.search);
+const scaler = Kit.Scaler({ start: 0.7, max: Math.min(window.devicePixelRatio || 1, 1.6), min: 0.28 });
+if (params.has('q')) { scaler.scale = +params.get('q'); scaler.lock(true); }
+
+// ---------- 視点 ----------
+const cam = { yaw: 0.6, pitch: 0.105, dist: 26, tDist: 26, look: 0 };
+if (params.has('pitch')) cam.pitch = +params.get('pitch');
+if (params.has('yaw')) cam.yaw = +params.get('yaw');
+if (params.has('d')) cam.dist = cam.tDist = +params.get('d');
+const opt = { doppler: 1, disk: 1, auto: !Kit.reduced, flow: 1 };
+let dive = null;           // 落下演出中の状態
+let idle = 0;
+let viewYaw = 0, viewPitch = 0;   // 落下中に見回す角度
+
+Kit.pointers(canvas, {
+  onDrag(dx, dy) {
+    idle = 0;
+    if (dive) {
+      viewYaw -= dx * 0.004; viewPitch = Kit.clamp(viewPitch + dy * 0.004, -1.2, 1.2);
+    } else {
+      cam.yaw -= dx * 0.0052;
+      cam.pitch = Kit.clamp(cam.pitch + dy * 0.0052, -1.5, 1.5);
+    }
+  },
+  onPinch(k) {
+    idle = 0;
+    if (!dive) cam.tDist = Kit.clamp(cam.tDist / k, 4, 60);
+  },
+});
+canvas.addEventListener('keydown', e => {
+  const s = 0.06;
+  if (e.key === 'ArrowLeft') cam.yaw -= s;
+  else if (e.key === 'ArrowRight') cam.yaw += s;
+  else if (e.key === 'ArrowUp') cam.pitch = Kit.clamp(cam.pitch + s, -1.5, 1.5);
+  else if (e.key === 'ArrowDown') cam.pitch = Kit.clamp(cam.pitch - s, -1.5, 1.5);
+  else if (e.key === '+' || e.key === '=') cam.tDist = Kit.clamp(cam.tDist * 0.9, 4, 60);
+  else if (e.key === '-') cam.tDist = Kit.clamp(cam.tDist / 0.9, 4, 60);
+  else return;
+  idle = 0; e.preventDefault();
+});
+
+// ---------- UI ----------
+const ui = Kit.chrome({
+  title: 'EVENT HORIZON', sub: '光が曲がる場所', canvas, name: 'event-horizon',
+  text: 'ブラウザの中で光が曲がる #KanataLab',
+  onSnap: () => Kit.snap(canvas, { render: () => frame(lastNow, true), name: 'event-horizon', label: 'EVENT HORIZON — KANATA LAB' }),
+});
+ui.toggle('ドップラー', true, v => { opt.doppler = v ? 1 : 0; Kit.hint(v ? '近づいてくる側が青く明るく、遠ざかる側が赤く暗くなる' : 'ドップラー効果なし（映画でよく見る左右対称の姿）'); });
+ui.toggle('円盤', true, v => { opt.disk = v ? 1 : 0; if (!v) Kit.hint('星の光だけ：黒い影のふちに空全体が何重にも写り込む'); });
+const diveBtn = ui.button('落ちてみる', () => {
+  if (dive) { dive.t = Math.max(dive.t, dive.T - 2.2); return; }
+  dive = { t: 0, T: 30, from: cam.dist };
+  viewYaw = viewPitch = 0;
+  diveBtn.classList.add('on'); diveBtn.textContent = '戻る';
+  Kit.hint('地平線のすぐ外まで降りて、空を見上げる', 4200);
+});
+ui.toggle('自動回転', opt.auto, v => { opt.auto = v; });
+const read = document.getElementById('read');
+
+// ---------- 描画 ----------
+let lastNow = 0, simT = 0, prevNow = 0;
+const smooth = (a, b, x) => { const t = Kit.clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+
+function frame(now, still) {
+  lastNow = now;
+  const dt = still ? 0 : Math.min(0.1, (now - prevNow) / 1000);
+  if (!still) {
+    if (prevNow && scaler.tick(now - prevNow)) { /* 解像度が変わった */ }
+    prevNow = now;
+    simT += dt;
+    idle += dt;
+    if (dive) {
+      dive.t += dt;
+      const u = dive.t / dive.T;
+      // 降りる → 留まる → 戻る
+      const down = smooth(0.0, 0.5, u), up = smooth(0.84, 1.0, u);
+      const depth = down * (1 - up);
+      cam.dist = Math.exp(Kit.lerp(Math.log(dive.from), Math.log(1.04), depth));
+      cam.tDist = cam.dist;
+      if (u >= 1) { dive = null; cam.dist = cam.tDist = 26; diveBtn.classList.remove('on'); diveBtn.textContent = '落ちてみる'; }
+    } else {
+      cam.dist += (cam.tDist - cam.dist) * Math.min(1, dt * 6);
+      if (opt.auto && idle > 2.5) cam.yaw += dt * 0.045;
+    }
+  }
+  // r が 2.6 を切ったあたりから、穴ではなく空（外側）を見上げる
+  cam.look = dive ? smooth(2.9, 1.5, cam.dist) : 0;
+
+  Kit.fit(canvas, scaler.scale);
+  bloom.resize(canvas.width, canvas.height);
+
+  const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+  const er = [cp * Math.sin(cam.yaw), sp, cp * Math.cos(cam.yaw)];
+  const pos = er.map(v => v * cam.dist);
+  // 動径に直交する「上」と「右」
+  let up0 = [-sp * Math.sin(cam.yaw), cp, -sp * Math.cos(cam.yaw)];
+  const right0 = [Math.cos(cam.yaw), 0, -Math.sin(cam.yaw)];
+  const g = cam.look * Math.PI;
+  const cg = Math.cos(g), sg = Math.sin(g);
+  let fwd = [0, 1, 2].map(i => -cg * er[i] + sg * up0[i]);
+  let up = [0, 1, 2].map(i => cg * up0[i] + sg * er[i]);
+  let right = right0.slice();
+  if (dive && (viewYaw || viewPitch)) {
+    // 見回し：右・上まわりに少し回す
+    const rot = (v, k, a) => {
+      const c = Math.cos(a), s = Math.sin(a), d = v[0] * k[0] + v[1] * k[1] + v[2] * k[2];
+      const cr = [k[1] * v[2] - k[2] * v[1], k[2] * v[0] - k[0] * v[2], k[0] * v[1] - k[1] * v[0]];
+      return [0, 1, 2].map(i => v[i] * c + cr[i] * s + k[i] * d * (1 - c));
+    };
+    const w = cam.look;
+    fwd = rot(fwd, up, viewYaw * w); right = rot(right, up, viewYaw * w);
+    fwd = rot(fwd, right, viewPitch * w); up = rot(up, right, viewPitch * w);
+  }
+
+  const u = prog.use();
+  G.bind(bloom.scene);
+  gl.uniform2f(u.uRes, canvas.width, canvas.height);
+  gl.uniform1f(u.uTime, simT);
+  const fov = Kit.lerp(0.5, 0.95, cam.look);
+  gl.uniform1f(u.uFov, fov);
+  gl.uniform1f(u.uDoppler, opt.doppler);
+  gl.uniform1f(u.uDisk, opt.disk);
+  gl.uniform1f(u.uFlow, 7.0);
+  gl.uniform1f(u.uPix, 2.0 * fov / Math.min(canvas.width, canvas.height));
+  gl.uniform3f(u.uCam, pos[0], pos[1], pos[2]);
+  gl.uniformMatrix3fv(u.uBasis, false, [...right, ...up, ...fwd]);
+  G.draw();
+  bloom.finish({ bloom: 0.7, threshold: 1.1, exposure: 1.0, vignette: 0.55, grain: 0.035, time: simT });
+
+  if (!still) {
+    const slow = Math.sqrt(1 - 1 / cam.dist);
+    read.innerHTML = `距離 <b>${cam.dist < 10 ? cam.dist.toFixed(2) : cam.dist.toFixed(1)}</b> r<sub>s</sub><br>時間の進み <b>×${slow.toFixed(3)}</b>` +
+      (cam.dist < 1.5 ? '<br><b>光子球の内側</b>' : '');
+    requestAnimationFrame(frame);
+  }
+}
+requestAnimationFrame(frame);
+setTimeout(() => Kit.hint('ドラッグで回す ・ ピンチ／ホイールで近づく'), 900);
+window.__lab = { cam, opt, scaler, get dive() { return dive; }, startDive: () => diveBtn.click() };
+</script>
+</body>
+</html>

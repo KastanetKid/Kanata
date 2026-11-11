@@ -1,0 +1,98 @@
+/* Kanata Lab — 作品共通の見た目 */
+:root {
+  --ink: #f2efe6;
+  --bg: #0b0b0d;
+  --dim: rgba(242, 239, 230, .62);
+  --line: rgba(242, 239, 230, .18);
+  --panel: rgba(11, 11, 13, .72);
+  --accent: #ffc233;
+  --st: env(safe-area-inset-top, 0px);
+  --sb: env(safe-area-inset-bottom, 0px);
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+  overflow: hidden; overscroll-behavior: none;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Hiragino Kaku Gothic ProN", "Noto Sans JP", monospace;
+  -webkit-user-select: none; user-select: none;
+  -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
+}
+canvas.stage {
+  position: fixed; inset: 0; width: 100vw; height: 100dvh; display: block;
+  touch-action: none; outline: none;
+}
+button, input { font: inherit; color: inherit; }
+
+/* 上のバー */
+.k-top {
+  position: fixed; z-index: 20; top: calc(var(--st) + 10px); left: 10px; right: 10px;
+  display: flex; align-items: flex-start; gap: 8px; pointer-events: none;
+}
+.k-top > * { pointer-events: auto; }
+.k-title { flex: 1; min-width: 0; pointer-events: none; text-shadow: 0 0 6px #000, 0 0 2px #000; }
+.k-title b { display: block; font-size: 15px; letter-spacing: .28em; white-space: nowrap; }
+.k-title span { display: block; font-size: 11px; color: var(--dim); letter-spacing: .08em; margin-top: 2px; }
+.k-btn {
+  appearance: none; border: 1px solid var(--line); background: var(--panel);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  min-width: 40px; height: 40px; padding: 0 11px; border-radius: 3px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  font-size: 12px; letter-spacing: .08em; text-decoration: none; color: var(--ink);
+  cursor: pointer; white-space: nowrap; flex: none;
+  transition: background .12s, border-color .12s, transform .08s;
+}
+.k-btn:active { transform: scale(.94); }
+.k-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.k-btn.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.k-btn.rec { border-color: #ff3355; color: #ff3355; }
+.k-btn.rec.on { background: #ff3355; color: #fff; animation: k-pulse 1s steps(2, start) infinite; }
+.k-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: square; }
+@keyframes k-pulse { 50% { opacity: .55; } }
+
+/* 下の操作列 */
+.k-bar {
+  position: fixed; z-index: 20; left: 0; right: 0; bottom: 0;
+  padding: 10px 10px calc(var(--sb) + 10px);
+  display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none;
+  background: linear-gradient(to top, rgba(11, 11, 13, .8), rgba(11, 11, 13, 0));
+}
+.k-bar::-webkit-scrollbar { display: none; }
+.k-bar.center { justify-content: center; }
+.k-bar.center > :first-child { margin-left: auto; }
+.k-bar.center > :last-child { margin-right: auto; }
+
+/* 一言ヒント */
+.k-hint {
+  position: fixed; z-index: 15; left: 50%; bottom: calc(var(--sb) + 74px);
+  transform: translateX(-50%); max-width: calc(100vw - 32px);
+  padding: 7px 14px; font-size: 12px; letter-spacing: .06em; text-align: center;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 3px;
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  pointer-events: none; opacity: 0; transition: opacity .5s;
+}
+.k-hint.show { opacity: 1; }
+
+/* 録画・撮影の結果シート */
+.k-sheet {
+  position: fixed; z-index: 50; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(5, 5, 7, .82); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  padding: 20px;
+}
+.k-sheet[hidden] { display: none; }
+.k-card {
+  display: flex; flex-direction: column; gap: 12px; align-items: center;
+  max-width: min(420px, 100%); max-height: 100%;
+}
+.k-card .k-media { max-width: 100%; max-height: 62dvh; border: 1px solid var(--line); display: block; background: #000; }
+.k-card p { margin: 0; font-size: 12px; color: var(--dim); text-align: center; line-height: 1.7; }
+.k-row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+
+.k-fail {
+  position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+  padding: 30px; text-align: center; font-size: 13px; line-height: 1.9; color: var(--dim);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .k-btn, .k-hint { transition: none; }
+  .k-btn.rec.on { animation: none; }
+}
