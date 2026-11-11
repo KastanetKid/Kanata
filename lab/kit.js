@@ -228,6 +228,7 @@ const Kit = (() => {
 
   // ---------- 解像度の自動調整 ----------
   // 重いシェーダーでも止まらないように、フレーム時間を見て描画倍率を変える
+  let recorder = null;
   function Scaler(o) {
     o = Object.assign({ min: 0.3, max: Math.min(window.devicePixelRatio || 1, 2), start: 0, target: 1000 / 50 }, o);
     let scale = o.start || Math.min(o.max, 1);
@@ -238,7 +239,8 @@ const Kit = (() => {
       lock(v) { locked = v; },
       // dt はミリ秒。倍率が変わったら true
       tick(dt) {
-        if (locked || dt > 250) return false;
+        // 録画中は解像度を変えない（途中で大きさが変わると動画が壊れる）
+        if (locked || recorder || dt > 250) return false;
         acc += dt; cnt++;
         if (cnt < 20) return false;
         const avg = acc / cnt;
@@ -398,7 +400,6 @@ const Kit = (() => {
     x.fillText(label || 'KANATA LAB', s * 1.1, h - s * 1.1);
   }
 
-  let recorder = null;
   const recType = () => {
     if (typeof MediaRecorder === 'undefined' || !HTMLCanvasElement.prototype.captureStream) return null;
     return ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m)) || null;

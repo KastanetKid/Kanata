@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0b0d">
+<title>Kanata Lab</title>
+<meta name="description" content="ブラウザだけで動く 4 つの実験。ブラックホール、名前から生まれる惑星、粒の生命、なぞって描く箱庭。">
+<meta property="og:title" content="Kanata Lab — ブラウザだけで動く 4 つの実験">
+<meta property="og:description" content="ブラックホール、名前から生まれる惑星、粒の生命、なぞって描く箱庭。ライブラリも画像素材も使っていません。">
+<meta property="og:image" content="https://kastanetkid.github.io/Kanata/lab/img/blackhole.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+  :root { --ink: #f2efe6; --bg: #0b0b0d; --dim: rgba(242, 239, 230, .62); --line: rgba(242, 239, 230, .18); --accent: #ffc233; }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body {
+    margin: 0; color: var(--ink); min-height: 100dvh;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Hiragino Kaku Gothic ProN", "Noto Sans JP", monospace;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #bg { position: fixed; inset: 0; width: 100vw; height: 100dvh; image-rendering: pixelated; image-rendering: crisp-edges; opacity: .13; pointer-events: none; }
+  main { position: relative; max-width: 1080px; margin: 0 auto; padding: calc(env(safe-area-inset-top, 0px) + 44px) 18px calc(env(safe-area-inset-bottom, 0px) + 44px); }
+  header { margin-bottom: 30px; }
+  h1 { margin: 0; font-size: clamp(34px, 9vw, 64px); letter-spacing: .16em; line-height: 1.05; font-weight: 700; }
+  h1 span { color: var(--accent); }
+  .lead {
+    margin: 16px 0 0; font-size: 14px; line-height: 2; color: var(--dim); max-width: 40em;
+    font-family: "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", system-ui, sans-serif;
+  }
+  .lead b { color: var(--ink); font-weight: 600; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap: 18px; padding: 0; margin: 0; list-style: none; }
+  .card {
+    display: block; color: inherit; text-decoration: none; background: #101013; border: 1px solid var(--line);
+    transition: border-color .15s, transform .15s; overflow: hidden;
+  }
+  .card:hover { border-color: var(--ink); transform: translateY(-2px); }
+  .card:active { transform: scale(.985); }
+  .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .card img { display: block; width: 100%; height: auto; aspect-ratio: 1200 / 630; object-fit: cover; background: #000; border-bottom: 1px solid var(--line); }
+  .card div { padding: 14px 16px 16px; }
+  .card h2 { margin: 0; font-size: 17px; letter-spacing: .24em; display: flex; align-items: baseline; gap: 10px; }
+  .card h2 small { font-size: 11px; letter-spacing: .1em; color: var(--accent); font-weight: 400; }
+  .card p {
+    margin: 8px 0 0; font-size: 13px; line-height: 1.85; color: var(--ink);
+    font-family: "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", system-ui, sans-serif;
+  }
+  .card ul { margin: 10px 0 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px; }
+  .card li { font-size: 10px; letter-spacing: .08em; color: var(--dim); border: 1px solid var(--line); padding: 2px 7px; }
+  footer {
+    margin-top: 34px; font-size: 12px; line-height: 2; color: var(--dim);
+    font-family: "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", system-ui, sans-serif;
+  }
+  footer a { color: var(--ink); text-underline-offset: 3px; }
+  @media (prefers-reduced-motion: reduce) { .card { transition: none; } .card:hover { transform: none; } }
+</style>
+</head>
+<body>
+<canvas id="bg" aria-hidden="true"></canvas>
+<main>
+  <header>
+    <h1>KANATA <span>LAB</span></h1>
+    <p class="lead">
+      ブラウザだけで動く 4 つの実験。<b>ライブラリなし・画像素材なし・ビルドなし</b>。
+      どれも HTML ファイル 1 枚と、数式と、決まりごとだけでできています。スマホでそのまま触れます。
+    </p>
+  </header>
+  <ul class="grid">
+    <li><a class="card" href="blackhole.html">
+      <img src="img/blackhole.jpg" alt="降着円盤をまとったブラックホール。向こう側の円盤が上下に回り込んで見えている" width="1200" height="630" loading="eager">
+      <div>
+        <h2>EVENT HORIZON <small>観る</small></h2>
+        <p>画面の 1 ピクセルごとに、一般相対論の式で光の道すじを解くブラックホール。回して、近づいて、地平線のすぐ外から空を見上げられる。</p>
+        <ul><li>測地線の数値積分</li><li>ドップラー効果</li><li>重力レンズ</li></ul>
+      </div>
+    </a></li>
+    <li><a class="card" href="planet.html">
+      <img src="img/planet.jpg" alt="雲と大陸のある青い惑星。夜側に都市の灯がともっている" width="1200" height="630" loading="lazy">
+      <div>
+        <h2>NAMEPLANET <small>自分の星</small></h2>
+        <p>名前を入れると、その名前だけの惑星がひとつ生まれる。同じ名前なら世界中どこで開いても同じ星。共有カードも作れる。</p>
+        <ul><li>名前 → 乱数の種</li><li>地形・雲・環・月を数式で生成</li><li>レア度つき</li></ul>
+      </div>
+    </a></li>
+    <li><a class="card" href="life.html">
+      <img src="img/life.jpg" alt="色とりどりの粒が、細胞や虫のような群れを作っている" width="1200" height="630" loading="lazy">
+      <div>
+        <h2>PRIMORDIA <small>眺める</small></h2>
+        <p>決まりは「この色はあの色が好き・嫌い」の表ひとつだけ。それだけで粒が群れ、追いかけ、細胞のように動きだす。表は自分で書きかえられる。</p>
+        <ul><li>粒子生命</li><li>創発</li><li>宇宙ごと URL で共有</li></ul>
+      </div>
+    </a></li>
+    <li><a class="card" href="sand.html">
+      <img src="img/sand.jpg" alt="砂の丘、池、花、小さな火山のあるドット絵の箱庭" width="1200" height="630" loading="lazy">
+      <div>
+        <h2>DUSTBOX <small>遊ぶ</small></h2>
+        <p>砂、水、火、溶岩、火薬、種。指でなぞると、ひと粒ずつが決まりどおりに落ち、流れ、燃え、爆ぜ、花を咲かせる。</p>
+        <ul><li>セル・オートマトン</li><li>14 種類の素材</li><li>1bit ディザ表示</li></ul>
+      </div>
+    </a></li>
+  </ul>
+  <footer>
+    右上のカメラで画像、赤い丸で 8 秒の動画を撮って、そのままシェアできます。<br>
+    <a href="../">← Endless Stair（ゲーム）へ</a>
+  </footer>
+</main>
+<script>
+'use strict';
+// 背景：Endless Stair と同じ 4×4 ベイヤーのディザで、ゆっくり流れる濃淡を白黒 2 色にする
+(() => {
+  const c = document.getElementById('bg'), x = c.getContext('2d');
+  const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map(v => (v + 0.5) / 16);
+  const still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let W = 0, H = 0, img = null, last = 0;
+  function size() {
+    W = 120; H = Math.max(60, Math.round(W * window.innerHeight / window.innerWidth));
+    c.width = W; c.height = H; img = x.createImageData(W, H);
+  }
+  function draw(t) {
+    const d = img.data, s = t * 0.00012;
+    for (let y = 0; y < H; y++) for (let k = 0; k < W; k++) {
+      const u = k / W, v = y / W;
+      let l = 0.5 + 0.25 * Math.sin(u * 5 + s * 5 + Math.sin(v * 3 - s * 3) * 1.6) + 0.25 * Math.sin(v * 4.2 - s * 4 + Math.cos(u * 2.7 + s * 2) * 1.8);
+      l *= 0.78;
+      const on = l > BAYER[(y & 3) * 4 + (k & 3)], i = (y * W + k) * 4;
+      d[i] = on ? 242 : 11; d[i + 1] = on ? 239 : 11; d[i + 2] = on ? 230 : 13; d[i + 3] = 255;
+    }
+    x.putImageData(img, 0, 0);
+  }
+  function loop(t) {
+    if (t - last > 66) { last = t; draw(t); }     // 15fps で十分
+    requestAnimationFrame(loop);
+  }
+  window.addEventListener('resize', () => { size(); draw(performance.now()); });
+  size(); draw(0);
+  if (!still) requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

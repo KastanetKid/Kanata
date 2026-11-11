@@ -260,7 +260,16 @@ canvas.addEventListener('keydown', e => {
 const ui = Kit.chrome({
   title: 'EVENT HORIZON', sub: '光が曲がる場所', canvas, name: 'event-horizon',
   text: 'ブラウザの中で光が曲がる #KanataLab',
-  onSnap: () => Kit.snap(canvas, { render: () => frame(lastNow, true), name: 'event-horizon', label: 'EVENT HORIZON — KANATA LAB' }),
+  onSnap: () => Kit.snap(canvas, {
+    // 撮るときだけ高い解像度で 1 枚描く（次のフレームで元に戻る）
+    render: () => {
+      const keep = scaler.scale;
+      scaler.scale = Math.max(keep, Math.min(2.5, 1600 / Math.max(canvas.clientWidth, canvas.clientHeight)));
+      frame(lastNow, true);
+      scaler.scale = keep;
+    },
+    name: 'event-horizon', label: 'EVENT HORIZON — KANATA LAB',
+  }),
 });
 ui.toggle('ドップラー', true, v => { opt.doppler = v ? 1 : 0; Kit.hint(v ? '近づいてくる側が青く明るく、遠ざかる側が赤く暗くなる' : 'ドップラー効果なし（映画でよく見る左右対称の姿）'); });
 ui.toggle('円盤', true, v => { opt.disk = v ? 1 : 0; if (!v) Kit.hint('星の光だけ：黒い影のふちに空全体が何重にも写り込む'); });
