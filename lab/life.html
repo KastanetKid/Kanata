@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b0b0d">
+<title>PRIMORDIA — Kanata Lab</title>
+<meta name="description" content="「この色はあの色が好き」という表ひとつだけで、粒が群れ、追いかけ、細胞のように動きだす。">
+<meta property="og:title" content="PRIMORDIA — 生命のスープ">
+<meta property="og:description" content="「この色はあの色が好き」という表ひとつだけで、粒が群れ、追いかけ、細胞のように動きだす。">
+<meta property="og:image" content="https://kastanetkid.github.io/Kanata/lab/img/life.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="kit.css">
+<style>
+  #rules {
+    position: fixed; z-index: 19; right: 10px; top: calc(var(--st) + 60px);
+    padding: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 3px;
+    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  }
+  #rules[hidden] { display: none; }
+  #rules table { border-collapse: separate; border-spacing: 2px; }
+  #rules td, #rules th { width: 30px; height: 30px; padding: 0; }
+  #rules th i { display: block; width: 12px; height: 12px; border-radius: 50%; margin: auto; }
+  #rules td button {
+    display: block; width: 100%; height: 100%; border: 0; border-radius: 2px; padding: 0; cursor: pointer;
+    font-size: 9px; color: rgba(255, 255, 255, .85); font-variant-numeric: tabular-nums;
+  }
+  #rules td button:focus-visible { outline: 2px solid var(--ink); }
+  #rules p { margin: 8px 0 0; font-size: 10px; line-height: 1.6; color: var(--dim); max-width: 230px; }
+  #rules p b { color: #ff8a3d; font-weight: 600; }
+  #rules p u { color: #4da3ff; text-decoration: none; font-weight: 600; }
+</style>
+</head>
+<body>
+<canvas id="c" class="stage" tabindex="0" aria-label="粒子のシミュレーション。押している間、粒を引き寄せる"></canvas>
+<div id="rules" hidden></div>
+<script src="kit.js"></script>
+<script>
+'use strict';
+// PRIMORDIA
+// 粒には色（種）があるだけ。決まりは「色 A の粒は、近くにいる色 B の粒に引かれる／避ける」という K×K の表ひとつ。
+// 作用・反作用が釣り合わない（A は B が好きでも、B は A が嫌いでいい）ので、追う・逃げる・回る・分裂するといった動きが勝手に生まれる。
+//
+//   力     : 距離 r < β なら反発（重ならないように）。β〜1 の間は三角形の山で、高さが表の値（−1〜+1）
+//   近傍探索: 力が届く距離を 1 マスにした格子に粒を入れ、まわり 9 マスだけ調べる（世界の端はつながっている）
+//   描画   : 点を加算合成 → 前のフレームを少し残して尾を引かせる → ブルーム
+
+// ---------- 宇宙のルール ----------
+const ALPHA = 'abcdefghijklmnopqrstu';     // −1.0 〜 +1.0 を 0.1 きざみで 1 文字に
+const U = { K: 6, hue: 0, M: new Float32Array(36), beta: 0.3 };
+function randomUniverse(seedStr) {
+  const R = Kit.rng('primordia/' + seedStr);
+  const K = R.int(4, 7);
+  const style = R();
+  let code = String(K) + R.int(0, 35).toString(36);
+  for (let i = 0; i < K; i++) for (let j = 0; j < K; j++) {
+    let v = R.range(-1, 1);
+    if (style < 0.22) {
+      // 鎖：自分と次の色が好き → ひも状・蛇状になりやすい
+      v = i === j ? R.range(0.5, 1) : j === (i + 1) % K ? R.range(0.2, 0.7) : j === (i + K - 1) % K ? R.range(-0.6, 0) : R.range(-0.4, 0.2);
+    } else if (style < 0.4) {
+      // 自分どうしで固まりやすい → 細胞のような塊
+      if (i === j) v = R.range(0.3, 1);
+    }
+    code += ALPHA[Math.round((Kit.clamp(v, -1, 1) + 1) * 10)];
+  }
+  return code;
+}
+function decode(code) {
+  const K = +code[0];
+  if (!(K >= 2 && K <= 7) || code.length !== 2 + K * K) return false;
+  const hue = parseInt(code[1], 36);
+  if (!(hue >= 0)) return false;
+  const M = new Float32Array(K * K);
+  for (let i = 0; i < K * K; i++) {
+    const v = ALPHA.indexOf(code[2 + i]);
+    if (v < 0) return false;
+    M[i] = v / 10 - 1;
+  }
+  U.K = K; U.hue = hue; U.M = M;
+  return true;
+}
+function encode() {
+  let code = String(U.K) + U.hue.toString(36);
+  for (let i = 0; i < U.K * U.K; i++) code += ALPHA[Math.round((U.M[i] + 1) * 10)];
+  return code;
+}
+const tag = code => (Kit.hashStr(code)[0] % 1679616).toString(36).toUpperCase().padStart(4, '0');
+function hslLin(h, s, l) {
+  h = ((h % 360) + 360) % 360 / 360;
+  const f = n => { const k = (n + h * 12) % 12, a = s * Math.min(l, 1 - l); return Math.pow(l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)), 2.2); };
+  return [f(0), f(8), f(4)];
+}
+const hslCss = (h, s, l) => `hsl(${((h % 360) + 360) % 360} ${s * 100}% ${l * 100}%)`;
+const speciesHue = i => U.hue * 10 + i * 360 / U.K + (i % 2) * 12;
+
+// ---------- 粒 ----------
+const params = new URLSearchParams(location.search);
+let N = 0, W = 10, H = 10;
+let px, py, vx, vy, sp, sx, sy, ss, sidx, cellOf, counts, starts, gw = 3, gh = 3;
+const DENSITY = 34;            // 力が届く範囲にいる粒の平均数
+const DT = 0.02, FRICTION = Math.pow(0.5, DT / 0.04), FORCE = 9.0;
+
+function alloc(n) {
+  N = n;
+  px = new Float32Array(n); py = new Float32Array(n); vx = new Float32Array(n); vy = new Float32Array(n);
+  sp = new Uint8Array(n); sx = new Float32Array(n); sy = new Float32Array(n); ss = new Uint8Array(n);
+  sidx = new Uint32Array(n); cellOf = new Uint32Array(n);
+}
+function setWorld(aspect) {
+  const area = N * Math.PI / DENSITY;
+  const nw = Math.sqrt(area * aspect), nh = area / nw;
+  if (px && W > 0) for (let i = 0; i < N; i++) { px[i] *= nw / W; py[i] *= nh / H; }
+  W = nw; H = nh;
+  gw = Math.max(3, Math.floor(W)); gh = Math.max(3, Math.floor(H));
+  counts = new Uint32Array(gw * gh + 1); starts = new Uint32Array(gw * gh + 1);
+}
+function scatter(seedStr) {
+  const R = Kit.rng('scatter/' + seedStr);
+  for (let i = 0; i < N; i++) {
+    px[i] = R() * W; py[i] = R() * H; vx[i] = vy[i] = 0;
+    sp[i] = Math.floor(R() * U.K);
+  }
+}
+
+const pointer = { on: false, x: 0, y: 0, sign: 1 };
+function step() {
+  const K = U.K, M = U.M, beta = U.beta, invB = 1 / beta, tri = 1 / (1 - beta);
+  const cw = W / gw, ch = H / gh, icw = 1 / cw, ich = 1 / ch, nc = gw * gh;
+  // 1. 粒をマスごとに並べ替える（数え上げソート）
+  counts.fill(0);
+  for (let i = 0; i < N; i++) {
+    let cx = (px[i] * icw) | 0, cy = (py[i] * ich) | 0;
+    if (cx >= gw) cx = gw - 1; if (cy >= gh) cy = gh - 1;
+    const c = cy * gw + cx;
+    cellOf[i] = c; counts[c]++;
+  }
+  let acc = 0;
+  for (let c = 0; c < nc; c++) { starts[c] = acc; acc += counts[c]; counts[c] = starts[c]; }
+  starts[nc] = acc;
+  for (let i = 0; i < N; i++) {
+    const k = counts[cellOf[i]]++;
+    sx[k] = px[i]; sy[k] = py[i]; ss[k] = sp[i]; sidx[k] = i;
+  }
+  // 2. まわり 9 マスの粒から受ける力
+  const kf = FORCE * DT;
+  for (let cy = 0; cy < gh; cy++) for (let cx = 0; cx < gw; cx++) {
+    const c = cy * gw + cx, a0 = starts[c], a1 = starts[c + 1];
+    if (a0 === a1) continue;
+    for (let a = a0; a < a1; a++) {
+      const xi = sx[a], yi = sy[a], row = ss[a] * K;
+      let fx = 0, fy = 0;
+      for (let oyc = -1; oyc <= 1; oyc++) {
+        let ny = cy + oyc, oy = 0;
+        if (ny < 0) { ny += gh; oy = -H; } else if (ny >= gh) { ny -= gh; oy = H; }
+        for (let oxc = -1; oxc <= 1; oxc++) {
+          let nx = cx + oxc, ox = 0;
+          if (nx < 0) { nx += gw; ox = -W; } else if (nx >= gw) { nx -= gw; ox = W; }
+          const cc = ny * gw + nx;
+          for (let b = starts[cc], b1 = starts[cc + 1]; b < b1; b++) {
+            const dx = sx[b] + ox - xi, dy = sy[b] + oy - yi;
+            const d2 = dx * dx + dy * dy;
+            if (d2 < 1 && d2 > 1e-10) {
+              const r = Math.sqrt(d2);
+              const f = r < beta ? r * invB - 1 : M[row + ss[b]] * (1 - Math.abs(2 * r - 1 - beta) * tri);
+              const g = f / r;
+              fx += dx * g; fy += dy * g;
+            }
+          }
+        }
+      }
+      const i = sidx[a];
+      vx[i] = vx[i] * FRICTION + fx * kf;
+      vy[i] = vy[i] * FRICTION + fy * kf;
+    }
+  }
+  // 3. 指の力：押している間、まわりの粒を引き寄せる（または弾く）
+  if (pointer.on) {
+    const R = 5.5, R2 = R * R, hw = W / 2, hh = H / 2;
+    for (let i = 0; i < N; i++) {
+      let dx = pointer.x - px[i], dy = pointer.y - py[i];
+      if (dx > hw) dx -= W; else if (dx < -hw) dx += W;
+      if (dy > hh) dy -= H; else if (dy < -hh) dy += H;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < R2 && d2 > 1e-6) {
+        const d = Math.sqrt(d2), s = (1 - d / R) * 1.3 * pointer.sign / d;
+        vx[i] += (dx * s - dy * s * 0.5 * pointer.sign); vy[i] += (dy * s + dx * s * 0.5 * pointer.sign);
+      }
+    }
+  }
+  // 4. 動かす（端は反対側へ）
+  for (let i = 0; i < N; i++) {
+    let x = px[i] + vx[i] * DT, y = py[i] + vy[i] * DT;
+    if (x < 0) x += W; else if (x >= W) x -= W;
+    if (y < 0) y += H; else if (y >= H) y -= H;
+    px[i] = x; py[i] = y;
+  }
+}
+
+// 端末の速さを測って粒の数を決める
+function chooseN() {
+  if (params.has('n')) return +params.get('n');
+  decode(randomUniverse('bench'));
+  alloc(3000); W = 0; setWorld(1); scatter('bench');
+  for (let i = 0; i < 3; i++) step();
+  const t0 = performance.now();
+  for (let i = 0; i < 6; i++) step();
+  const ms = (performance.now() - t0) / 6;
+  return Math.round(Kit.clamp(3000 * 5.0 / Math.max(ms, 0.4), 1500, 12000) / 500) * 500;
+}
+
+// ---------- 描画 ----------
+const canvas = document.getElementById('c');
+const G = Kit.initGL(canvas);
+if (!G) { Kit.fail(); throw new Error('no webgl2'); }
+const gl = G.gl;
+const VS_P = `#version 300 es
+layout(location = 0) in vec4 aP;      // x, y, 速さ, 種
+uniform vec2 uWorld, uCam, uAsp;
+uniform float uZoom, uSize;
+uniform vec3 uCol[7];
+out vec3 vCol;
+void main() {
+  vec2 p = fract((aP.xy - uCam) / uWorld + 0.5) - 0.5;   // カメラから見ていちばん近い像
+  gl_Position = vec4(p * 2.0 * uZoom * uAsp, 0.0, 1.0);
+  gl_PointSize = uSize;
+  float sp = clamp(aP.z * 0.07, 0.0, 1.0);
+  vCol = uCol[int(aP.w)] * (0.8 + 0.5 * sp);
+}`;
+const FS_P = `#version 300 es
+precision highp float;
+in vec3 vCol; out vec4 o;
+void main() {
+  vec2 d = gl_PointCoord - 0.5;
+  float r2 = dot(d, d) * 4.0;
+  float a = exp(-r2 * 6.0) + exp(-r2 * 1.8) * 0.1;
+  o = vec4(vCol * a * smoothstep(1.0, 0.7, r2), 1.0);
+}`;
+const FS_FADE = `#version 300 es
+precision highp float;
+in vec2 vUv; out vec4 o;
+uniform sampler2D uTex; uniform float uFade; uniform vec2 uShift;
+void main() { o = vec4(max(texture(uTex, vUv + uShift).rgb * uFade - 0.0006, 0.0), 1.0); }`;
+const pPoint = G.program(FS_P, VS_P), pFade = G.program(FS_FADE);
+const bloom = Kit.Bloom(G, 6);
+const scaler = Kit.Scaler({ start: Math.min(window.devicePixelRatio || 1, 1.5), max: Math.min(window.devicePixelRatio || 1, 2), min: 0.5, target: 1000 / 45 });
+if (params.has('q')) { scaler.scale = +params.get('q'); scaler.lock(true); }
+let trailA = null, trailB = null, buf = null, vao = null, vdata = null;
+const view = { x: 0, y: 0, zoom: 1, tz: 1 };
+const opt = { trail: true, rules: false };
+
+function setupBuffers() {
+  vdata = new Float32Array(N * 4);
+  if (!buf) { buf = gl.createBuffer(); vao = gl.createVertexArray(); }
+  gl.bindVertexArray(vao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, vdata.byteLength, gl.DYNAMIC_DRAW);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 4, gl.FLOAT, false, 0, 0);
+  gl.bindVertexArray(null);
+}
+function aspVec() {
+  // 世界全体がちょうど画面を埋める
+  return [1, 1];
+}
+function render(now, noStep) {
+  if (Kit.fit(canvas, scaler.scale) || !trailA) {
+    if (trailA) { trailA.free(); trailB.free(); }
+    trailA = G.target(canvas.width, canvas.height, true);
+    trailB = G.target(canvas.width, canvas.height, true);
+    G.bind(trailA); gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+    G.bind(trailB); gl.clear(gl.COLOR_BUFFER_BIT);
+    bloom.resize(canvas.width, canvas.height);
+  }
+  for (let i = 0, j = 0; i < N; i++, j += 4) {
+    vdata[j] = px[i]; vdata[j + 1] = py[i];
+    vdata[j + 2] = Math.hypot(vx[i], vy[i]); vdata[j + 3] = sp[i];
+  }
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferSubData(gl.ARRAY_BUFFER, 0, vdata);
+
+  // 前のフレームを少し暗くして写す → その上に粒を足す
+  gl.disable(gl.BLEND);
+  let u = pFade.use();
+  G.bind(trailB);
+  G.tex(0, trailA, u.uTex);
+  gl.uniform1f(u.uFade, noStep ? 1 : opt.trail ? 0.88 : 0.5);
+  gl.uniform2f(u.uShift, 0, 0);
+  G.draw();
+  if (!noStep) {
+    u = pPoint.use();
+    // 重なった所は足さずに明るいほうを残す（塊が白く飛ばず、色が保たれる）
+    gl.enable(gl.BLEND);
+    gl.blendEquation(gl.MAX);
+    gl.blendFunc(gl.ONE, gl.ONE);
+    gl.uniform2f(u.uWorld, W, H);
+    gl.uniform2f(u.uCam, view.x, view.y);
+    gl.uniform2fv(u.uAsp, aspVec());
+    gl.uniform1f(u.uZoom, view.zoom);
+    gl.uniform1f(u.uSize, Math.max(2.5, 0.42 * view.zoom * canvas.width / W));
+    const cols = new Float32Array(21);
+    for (let i = 0; i < U.K; i++) cols.set(hslLin(speciesHue(i), 0.92, 0.56).map(v => v * 0.62), i * 3);
+    gl.uniform3fv(u.uCol, cols);
+    gl.bindVertexArray(vao);
+    gl.drawArrays(gl.POINTS, 0, N);
+    gl.bindVertexArray(null);
+    gl.blendEquation(gl.FUNC_ADD);
+    gl.disable(gl.BLEND);
+  }
+  [trailA, trailB] = [trailB, trailA];
+  bloom.finish({ src: trailA, bloom: 0.55, threshold: 0.5, exposure: 1.1, vignette: 0.5, grain: 0.03, time: now / 1000 });
+}
+
+// ---------- 進行 ----------
+let prevNow = 0, lastNow = 0, simAcc = 0;
+function frame(now) {
+  lastNow = now;
+  const dtMs = prevNow ? now - prevNow : 16;
+  if (prevNow) scaler.tick(dtMs);
+  prevNow = now;
+  simAcc += Math.min(dtMs, 50) / (1000 / 60);
+  let steps = Math.min(2, Math.floor(simAcc));
+  simAcc -= steps;
+  if (Kit.reduced) steps = Math.min(steps, 1);
+  for (let i = 0; i < steps; i++) step();
+  view.zoom += (view.tz - view.zoom) * 0.2;
+  render(now);
+  requestAnimationFrame(frame);
+}
+
+// ---------- 操作 ----------
+function toWorld(cx, cy) {
+  const r = canvas.getBoundingClientRect();
+  const nx = (cx - r.left) / r.width - 0.5, ny = 0.5 - (cy - r.top) / r.height;
+  return [((view.x + nx / view.zoom * W) % W + W) % W, ((view.y + ny / view.zoom * H) % H + H) % H];
+}
+Kit.pointers(canvas, {
+  onDown(p, n) {
+    if (n === 1) { [pointer.x, pointer.y] = toWorld(p.x, p.y); pointer.on = true; } else pointer.on = false;
+  },
+  onMove(p, n) {
+    if (n === 1 && pointer.on) [pointer.x, pointer.y] = toWorld(p.x, p.y);
+  },
+  onUp(p, n) { if (n === 0) pointer.on = false; },
+  onPinch(k) { view.tz = Kit.clamp(view.tz * k, 1, 5); },
+});
+window.addEventListener('resize', () => { setWorld(window.innerWidth / window.innerHeight); });
+
+let code = '';
+const ui = Kit.chrome({
+  title: 'PRIMORDIA', sub: '', canvas, name: 'primordia', center: false,
+  text: '表ひとつのルールから生き物みたいな群れが生まれる #PRIMORDIA #KanataLab',
+  onSnap: () => Kit.snap(canvas, { render: () => render(lastNow, true), name: 'primordia', label: `PRIMORDIA #${tag(code)} — KANATA LAB` }),
+});
+const subEl = ui.top.querySelector('.k-title span');
+function apply(newCode, rescatter) {
+  if (!decode(newCode)) return false;
+  code = newCode;
+  if (rescatter) scatter(code);
+  for (let i = 0; i < N; i++) if (sp[i] >= U.K) sp[i] = i % U.K;
+  subEl.textContent = `宇宙 #${tag(code)} ・ ${U.K} 種 ・ ${N.toLocaleString()} 粒`;
+  history.replaceState(null, '', '#' + code);
+  if (opt.rules) drawRules();
+  return true;
+}
+ui.button('新しい宇宙', () => {
+  apply(randomUniverse(Math.random().toString(36).slice(2)), true);
+});
+ui.button('突然変異', () => {
+  // 表のうち数か所だけ値をずらす。今いる粒はそのまま、ふるまいだけが変わる
+  const n = 2 + Math.floor(Math.random() * 3);
+  for (let k = 0; k < n; k++) {
+    const i = Math.floor(Math.random() * U.K * U.K);
+    U.M[i] = Kit.clamp(Math.round((U.M[i] + (Math.random() - 0.5) * 1.2) * 10) / 10, -1, 1);
+  }
+  apply(encode(), false);
+  Kit.hint('ルールが少し書き換わった');
+});
+ui.button('まき直す', () => scatter(code + Math.random()));
+ui.toggle('尾', true, v => { opt.trail = v; });
+ui.toggle('弾く', false, v => { pointer.sign = v ? -1 : 1; Kit.hint(v ? '押している間、粒を弾き飛ばす' : '押している間、粒を引き寄せる'); });
+ui.toggle('ルール表', false, v => { opt.rules = v; rulesEl.hidden = !v; if (v) drawRules(); });
+
+const rulesEl = document.getElementById('rules');
+function cellColor(v) {
+  const a = Math.abs(v);
+  return v >= 0 ? `rgba(255,122,40,${0.12 + a * 0.8})` : `rgba(60,150,255,${0.12 + a * 0.8})`;
+}
+function drawRules() {
+  const K = U.K;
+  let h = '<table role="grid" aria-label="色どうしの好き嫌いの表"><tr><th></th>';
+  for (let j = 0; j < K; j++) h += `<th><i style="background:${hslCss(speciesHue(j), 0.92, 0.6)}"></i></th>`;
+  h += '</tr>';
+  for (let i = 0; i < K; i++) {
+    h += `<tr><th><i style="background:${hslCss(speciesHue(i), 0.92, 0.6)}"></i></th>`;
+    for (let j = 0; j < K; j++) {
+      const v = U.M[i * K + j];
+      h += `<td><button data-i="${i * K + j}" style="background:${cellColor(v)}" aria-label="${i + 1} 番の色から見た ${j + 1} 番の色：${v.toFixed(1)}">${v > 0 ? '+' : ''}${v.toFixed(1)}</button></td>`;
+    }
+    h += '</tr>';
+  }
+  h += '</table><p>行の色が、列の色に <b>引かれる</b> ／ <u>避ける</u>。<br>マスを押すと値が変わる。</p>';
+  rulesEl.innerHTML = h;
+}
+rulesEl.addEventListener('click', e => {
+  const b = e.target.closest('button[data-i]');
+  if (!b) return;
+  const i = +b.dataset.i;
+  let v = Math.round((U.M[i] + 0.5) * 10) / 10;
+  if (v > 1.001) v = -1;
+  U.M[i] = v;
+  apply(encode(), false);
+});
+
+// ---------- 起動 ----------
+const n0 = chooseN();
+alloc(n0);
+W = 0; setWorld(window.innerWidth / window.innerHeight);
+setupBuffers();
+const fromHash = location.hash.slice(1);
+if (!(fromHash && apply(fromHash, true))) apply(randomUniverse(params.get('seed') || Math.random().toString(36).slice(2)), true);
+if (params.has('warm')) for (let i = 0; i < +params.get('warm'); i++) step();
+requestAnimationFrame(frame);
+setTimeout(() => Kit.hint('押している間、粒が集まる ・ ピンチで拡大 ・「新しい宇宙」で別のルール'), 900);
+window.__lab = { U, apply, randomUniverse, step, get N() { return N; }, get code() { return code; }, view };
+</script>
+</body>
+</html>

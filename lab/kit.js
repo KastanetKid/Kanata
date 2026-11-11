@@ -188,11 +188,12 @@ const Kit = (() => {
         chain.push(G.target(cw, ch, true));
       }
     }
-    // scene に描いたあとで呼ぶ。画面（または out）へ仕上げて出す
+    // scene（または o.src）に描いたあとで呼ぶ。画面（または out）へ仕上げて出す
     function finish(o) {
       o = Object.assign({ bloom: 0.8, threshold: 1.0, exposure: 1.0, vignette: 0.5, grain: 0.03, time: 0, out: null }, o);
       gl.disable(gl.BLEND);
-      let src = scene, u = pDown.use();
+      const base = o.src || scene;
+      let src = base, u = pDown.use();
       for (let i = 0; i < chain.length; i++) {
         G.bind(chain[i]);
         G.tex(0, src, u.uTex);
@@ -213,7 +214,7 @@ const Kit = (() => {
       gl.disable(gl.BLEND);
       u = pFinal.use();
       G.bind(o.out);
-      G.tex(0, scene, u.uTex);
+      G.tex(0, base, u.uTex);
       G.tex(1, chain[0], u.uBloom);
       gl.uniform1f(u.uBloomAmt, o.bloom / chain.length * 2.0);
       gl.uniform1f(u.uExposure, o.exposure);
