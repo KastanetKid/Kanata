@@ -1,0 +1,900 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b0b0d">
+<title>NAMEPLANET — Kanata Lab</title>
+<meta name="description" content="名前を入れると、その名前だけの惑星がひとつ生まれる。同じ名前なら、世界中どこで開いても同じ星。">
+<meta property="og:title" content="NAMEPLANET — あなたの名前は、どんな星？">
+<meta property="og:description" content="名前を入れると、その名前だけの惑星がひとつ生まれる。同じ名前なら、世界中どこで開いても同じ星。">
+<meta property="og:image" content="https://kastanetkid.github.io/Kanata/lab/img/planet.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="kit.css">
+<style>
+  .k-bar { display: none; }
+  .k-hint { bottom: auto; top: calc(var(--st) + 64px); }
+  #card {
+    position: fixed; z-index: 18; left: 0; right: 0; bottom: 0;
+    padding: 34px 16px calc(var(--sb) + 14px);
+    background: linear-gradient(to top, rgba(11, 11, 13, .94) 62%, rgba(11, 11, 13, 0));
+    display: flex; flex-direction: column; gap: 9px; pointer-events: none;
+  }
+  #card > * { pointer-events: auto; }
+  #pname {
+    margin: 0; font-size: clamp(24px, 8vw, 40px); font-weight: 700; letter-spacing: .04em; line-height: 1.15;
+    font-family: "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", system-ui, sans-serif;
+    overflow-wrap: anywhere; text-shadow: 0 0 12px #000;
+  }
+  #pmeta { font-size: 12px; letter-spacing: .1em; color: var(--dim); display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
+  #pmeta b { color: var(--ink); font-weight: 600; }
+  #pmeta .star { color: var(--accent); letter-spacing: .12em; }
+  #pflavor {
+    margin: 0; font-size: 13px; line-height: 1.75; color: var(--ink); max-width: 46em;
+    font-family: "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", system-ui, sans-serif;
+  }
+  #pstats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; margin: 2px 0; background: var(--line); border: 1px solid var(--line); }
+  #pstats div { background: rgba(11, 11, 13, .9); padding: 6px 8px 7px; min-width: 0; }
+  #pstats dt { font-size: 10px; color: var(--dim); letter-spacing: .12em; }
+  #pstats dd { margin: 2px 0 0; font-size: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #pstats dd small { font-size: 10px; color: var(--dim); margin-left: 2px; }
+  #pform { display: flex; gap: 8px; }
+  #pinput {
+    flex: 1; min-width: 0; height: 44px; padding: 0 12px; border-radius: 3px;
+    background: rgba(242, 239, 230, .08); border: 1px solid var(--line); color: var(--ink); font-size: 16px;
+    -webkit-user-select: text; user-select: text; outline: none;
+    font-family: "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", system-ui, sans-serif;
+  }
+  #pinput:focus { border-color: var(--accent); }
+  #pinput::placeholder { color: rgba(242, 239, 230, .4); }
+  #pform .k-btn { height: 44px; }
+  @media (min-width: 760px) and (min-aspect-ratio: 1/1) {
+    #card { right: auto; top: 0; width: 380px; justify-content: flex-end; padding: 80px 20px 22px;
+      background: linear-gradient(to right, rgba(11, 11, 13, .9) 70%, rgba(11, 11, 13, 0)); }
+  }
+  @media (max-height: 620px) and (max-width: 759px) { #pflavor { display: none; } }
+</style>
+</head>
+<body>
+<canvas id="c" class="stage" tabindex="0" aria-label="惑星の描画。ドラッグで視点を回し、ピンチまたはホイールで距離を変える"></canvas>
+<section id="card" aria-live="polite">
+  <h1 id="pname"></h1>
+  <div id="pmeta"></div>
+  <p id="pflavor"></p>
+  <dl id="pstats"></dl>
+  <form id="pform" autocomplete="off">
+    <input id="pinput" type="text" maxlength="24" placeholder="名前を入れる" aria-label="惑星のもとになる名前" enterkeyhint="go">
+    <button class="k-btn on" type="submit">生成</button>
+    <button class="k-btn" type="button" id="prand" aria-label="ランダムな名前で生成">おまかせ</button>
+  </form>
+</section>
+<script src="kit.js"></script>
+<script>
+'use strict';
+// NAMEPLANET
+// 名前の文字列をハッシュして乱数の種にし、惑星のすべて（型・色・地形・雲・環・月・自転）を決める。
+// 画像やモデルのデータは持たない。球との交点を解析的に求め、地形や雲はノイズ関数で毎フレーム計算している。
+const FS = `#version 300 es
+precision highp float;
+in vec2 vUv;
+out vec4 outColor;
+uniform vec2 uRes, uCenter;
+uniform float uTime, uFov, uPix, uGas, uAppear;
+uniform vec3 uCam, uSun, uSunCol, uSeed, uAxis;
+uniform mat3 uBasis, uRot;
+uniform vec3 uPal[5];
+uniform vec3 uCloudCol, uAtmoCol, uGlowCol, uRingCol;
+uniform vec4 uTer;    // 海面の高さ, 地形の細かさ, ゆがみ, 尾根の鋭さ
+uniform vec4 uClim;   // 氷冠の広さ, 雲の量, 雲の細かさ, 大気の濃さ
+uniform vec4 uEmi;    // 都市の灯, 溶岩, オーロラ, 縞の数
+uniform vec4 uRing;   // 内径, 外径, 濃さ, 模様の種
+uniform vec4 uStorm;  // 嵐の位置 (xyz) と大きさ
+uniform vec4 uMoon[3];
+uniform vec3 uMoonCol[3];
+
+const float PI = 3.14159265;
+
+float h11(float p) { p = fract(p * 0.1031); p *= p + 33.33; p *= p + p; return fract(p); }
+float h31(vec3 p) { p = fract(p * 0.1031); p += dot(p, p.zyx + 31.32); return fract((p.x + p.y) * p.z); }
+vec3 h33(vec3 p) { p = fract(p * vec3(0.1031, 0.1030, 0.0973)); p += dot(p, p.yxz + 33.33); return fract((p.xxy + p.yxx) * p.zyx); }
+float n1(float x) { float i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f); return mix(h11(i), h11(i + 1.0), f); }
+float vnoise(vec3 x) {
+  vec3 i = floor(x), f = fract(x);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(h31(i), h31(i + vec3(1, 0, 0)), f.x), mix(h31(i + vec3(0, 1, 0)), h31(i + vec3(1, 1, 0)), f.x), f.y),
+             mix(mix(h31(i + vec3(0, 0, 1)), h31(i + vec3(1, 0, 1)), f.x), mix(h31(i + vec3(0, 1, 1)), h31(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
+float fbm(vec3 p, int oct) {
+  float a = 0.5, s = 0.0, t = 0.0;
+  for (int i = 0; i < 6; i++) {
+    if (i >= oct) break;
+    s += a * vnoise(p); t += a; p = p * 2.03 + 17.1; a *= 0.5;
+  }
+  return s / t;
+}
+// 勾配ノイズ：値ノイズより格子っぽさが出にくいので、海岸線や山並みに使う（およそ 0〜1）
+float gnoise(vec3 x) {
+  vec3 i = floor(x), f = fract(x);
+  vec3 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+  #define GR(o) dot(h33(i + o) * 2.0 - 1.0, f - o)
+  float a = mix(mix(mix(GR(vec3(0, 0, 0)), GR(vec3(1, 0, 0)), u.x), mix(GR(vec3(0, 1, 0)), GR(vec3(1, 1, 0)), u.x), u.y),
+                mix(mix(GR(vec3(0, 0, 1)), GR(vec3(1, 0, 1)), u.x), mix(GR(vec3(0, 1, 1)), GR(vec3(1, 1, 1)), u.x), u.y), u.z);
+  return clamp(0.5 + a * 0.85, 0.0, 1.0);
+}
+vec3 warp3(vec3 w) { return vec3(vnoise(w + 5.2), vnoise(w + 17.9), vnoise(w + 31.4)) - 0.5; }
+
+// ---- 岩石惑星の地形（0〜1）。尾根ノイズを混ぜると山脈や亀裂になる
+float terrainAt(vec3 w) {
+  float a = 0.5, s = 0.0, t = 0.0;
+  for (int i = 0; i < 5; i++) {
+    float n = gnoise(w);
+    float r = 1.0 - abs(2.0 * n - 1.0);
+    s += a * mix(n, r * r, uTer.w); t += a;
+    w = w * 2.11 + 17.1; a *= 0.54;
+  }
+  return s / t;
+}
+float cloudTone = 1.0;
+float cloudsAt(vec3 q) {
+  vec3 w = q * uClim.z * vec3(1.0, 1.7, 1.0) + uSeed.zxy * 1.7 + vec3(0.0, uTime * 0.006, 0.0);
+  w += warp3(w * 0.7 + 3.0) * 1.6;
+  float c = fbm(w, 5);
+  float th = mix(0.74, 0.30, uClim.y);
+  cloudTone = 0.72 + 0.56 * smoothstep(th, th + 0.45, c) * fbm(w * 2.7 + 8.0, 2);
+  return smoothstep(th, th + 0.2, c);
+}
+vec3 pal(float v) {
+  v = clamp(v, 0.0, 1.0) * 4.0;
+  vec3 c = mix(uPal[0], uPal[1], clamp(v, 0.0, 1.0));
+  c = mix(c, uPal[2], clamp(v - 1.0, 0.0, 1.0));
+  c = mix(c, uPal[3], clamp(v - 2.0, 0.0, 1.0));
+  return mix(c, uPal[4], clamp(v - 3.0, 0.0, 1.0));
+}
+
+float sphere(vec3 ro, vec3 rd, vec3 c, float r) {
+  vec3 oc = ro - c;
+  float b = dot(oc, rd), d = b * b - dot(oc, oc) + r * r;
+  if (d < 0.0) return -1.0;
+  return -b - sqrt(d);
+}
+// 環の濃さ（中心からの距離だけで決まる）
+float ringDens(float r) {
+  float x = (r - uRing.x) / (uRing.y - uRing.x);
+  if (x <= 0.0 || x >= 1.0) return 0.0;
+  float s = uRing.w;
+  float n = 0.5 * n1(x * 7.0 + s) + 0.3 * n1(x * 23.0 + s * 2.3) + 0.2 * n1(x * 71.0 + s * 4.1);
+  float d = smoothstep(0.28, 0.62, n) * (0.55 + 0.45 * n1(x * 160.0 + s));
+  d *= smoothstep(0.0, 0.05, x) * smoothstep(1.0, 0.9, x);
+  d *= 1.0 - 0.92 * smoothstep(0.035, 0.0, abs(x - (0.35 + 0.4 * h11(s))));
+  return d * uRing.z;
+}
+// 点 p から太陽へ向かう光が、惑星・環・月にどれだけ遮られるか
+float sunVisPlanet(vec3 p) {
+  float b = dot(p, uSun), d = b * b - dot(p, p) + 1.0;
+  if (d < 0.0 || b > 0.0) return 1.0;
+  return 1.0 - smoothstep(0.0, 0.006, d);
+}
+float sunVisRing(vec3 p) {
+  if (uRing.z <= 0.0) return 1.0;
+  float dn = dot(uSun, uAxis);
+  if (abs(dn) < 1e-4) return 1.0;
+  float t = -dot(p, uAxis) / dn;
+  if (t <= 0.0) return 1.0;
+  return 1.0 - 0.85 * ringDens(length(p + uSun * t));
+}
+float sunVisMoons(vec3 p) {
+  float v = 1.0;
+  for (int i = 0; i < 3; i++) {
+    if (uMoon[i].w <= 0.0) continue;
+    vec3 oc = p - uMoon[i].xyz;
+    float b = dot(oc, uSun);
+    if (b > 0.0) continue;
+    float d2 = dot(oc, oc) - b * b;
+    v *= smoothstep(uMoon[i].w * 0.55, uMoon[i].w * 1.25, sqrt(d2));
+  }
+  return v;
+}
+
+vec3 starLayer(vec3 d, float N, float thresh) {
+  vec3 id = floor(d * N);
+  vec3 r = h33(id);
+  if (r.x <= thresh) return vec3(0.0);
+  vec3 sp = normalize(id + 0.3 + 0.4 * h33(id + 7.7));
+  float rad = clamp(uPix * N, 0.04, 0.2);
+  float dd = length(d - sp) * N / rad;
+  float mag = pow(r.y, 14.0) * 7.0 + 0.04 + 0.4 * pow(r.y, 4.0);
+  vec3 tint = mix(vec3(1.0, 0.72, 0.5), vec3(0.65, 0.78, 1.0), r.z);
+  return tint * mag * exp(-dd * dd);
+}
+vec3 sky(vec3 d) {
+  vec3 col = starLayer(d, 30.0, 0.96) * 0.8 + starLayer(d, 70.0, 0.96) * 0.45 + starLayer(d, 150.0, 0.955) * 0.22;
+  vec3 n = normalize(vec3(0.3, 0.8, -0.5));
+  float lat = dot(d, n);
+  float band = exp(-lat * lat * 14.0);
+  float cl = fbm(d * 3.0 + 9.0 + uSeed * 0.1, 4);
+  col += mix(vec3(0.05, 0.07, 0.14), vec3(0.16, 0.1, 0.12), cl) * band * cl * 0.9;
+  col += smoothstep(0.55, 0.9, fbm(d * 1.6 + 40.0 + uSeed * 0.07, 3)) * uAtmoCol * 0.035;
+  return col;
+}
+
+// ---- 岩石惑星の表面
+vec3 shadeRock(vec3 n, vec3 rd, vec3 q, float px) {
+  vec3 w = q * uTer.y + uSeed;
+  w += warp3(w * 0.6) * uTer.z;
+  float e = max(0.0035, px * 1.5);
+  vec3 t1 = normalize(cross(q, vec3(0.0, 1.0, 0.03)));
+  vec3 t2 = cross(q, t1);
+  float h0 = terrainAt(w), h1 = terrainAt(w + t1 * e * uTer.y), h2 = terrainAt(w + t2 * e * uTer.y);
+  float sea = uTer.x;
+  float land = smoothstep(sea - 0.004, sea + 0.004, h0);
+  float el = clamp((h0 - sea) / (0.8 - sea), 0.0, 1.0);
+  float depth = clamp((sea - h0) / 0.22, 0.0, 1.0);
+
+  // 色：海は深さ、陸は高さと緯度
+  float lat = abs(q.y);
+  float lavaSea = uEmi.y;
+  vec3 seaCol = mix(uPal[1], uPal[0], smoothstep(0.0, 0.7, depth));
+  float dry = vnoise(w * 0.5 + 40.0);
+  vec3 landCol = mix(uPal[2], uPal[3], smoothstep(0.08, 0.55, el + (dry - 0.5) * 0.3 + (lat - 0.4) * 0.25));
+  landCol = mix(landCol, uPal[4], smoothstep(0.55, 0.9, el + (dry - 0.5) * 0.15));
+  landCol = mix(landCol, landCol * 1.25 + 0.03, smoothstep(0.03, 0.0, el) * (1.0 - lavaSea));   // 浜
+  vec3 alb = mix(seaCol, landCol, land);
+  // 氷冠
+  float ice = smoothstep(uClim.x - 0.05, uClim.x + 0.03, lat + (h0 - 0.5) * 0.35 + (vnoise(w * 3.0) - 0.5) * 0.12);
+  ice *= 1.0 - lavaSea;
+  alb = mix(alb, vec3(0.86, 0.91, 0.96), ice);
+  float water = (1.0 - land) * (1.0 - ice) * (1.0 - lavaSea);
+
+  // 起伏の法線（陸だけ）
+  vec3 grad = (t1 * (h1 - h0) + t2 * (h2 - h0)) / e;
+  vec3 nl = normalize(q - grad * 0.06 * mix(0.15, 1.0, land) * (1.0 - 0.5 * ice));
+  vec3 nb = transpose(uRot) * nl;
+
+  // 雲とその影
+  vec3 sunL = uRot * uSun;
+  float cover = uClim.y > 0.0 ? 1.0 : 0.0;
+  float clSh = cover * cloudsAt(normalize(q + sunL * 0.035));
+  float cl = cover * cloudsAt(q);
+  vec3 cloudC = uCloudCol * cloudTone;
+
+  float ndl = dot(nb, uSun), ndlS = dot(n, uSun);
+  float atmo = uClim.w;
+  float vis = sunVisRing(n) * sunVisMoons(n);
+  // 明暗の境目は大気が濃いほどやわらかく、夕焼け色がつく
+  float soft = 0.06 + 0.2 * atmo;
+  float day = smoothstep(-soft, soft * 1.6, ndlS) * clamp(ndl * 0.85 + 0.15, 0.0, 1.0) * vis;
+  vec3 sunC = uSunCol * mix(mix(vec3(1.0), vec3(1.0, 0.42, 0.18), atmo * 0.9), vec3(1.0), smoothstep(-0.05, 0.4, ndlS));
+  vec3 col = alb * sunC * day * (1.0 - 0.55 * clSh * (1.0 - cl));
+  col += alb * 0.006;
+  // 海のきらめき
+  vec3 hv = normalize(uSun - rd);
+  float spec = pow(max(dot(n, hv), 0.0), 140.0) * 2.2 + pow(max(dot(n, hv), 0.0), 18.0) * 0.12;
+  col += water * spec * sunC * day * (1.0 - cl);
+  // 溶岩：昼夜に関係なく自分で光る
+  if (lavaSea > 0.0) {
+    float crust = smoothstep(0.3, 0.8, fbm(w * 4.0 + uTime * 0.015, 3));
+    float glow = (1.0 - land) * (0.08 + 0.92 * crust * crust) * (0.4 + 0.6 * smoothstep(0.0, 0.5, depth)) + land * smoothstep(0.06, 0.0, el) * 0.35;
+    float cracks = land * smoothstep(0.88, 0.98, 1.0 - abs(2.0 * gnoise(w * 3.3 + 9.0) - 1.0)) * (1.0 - el);
+    vec3 hot = mix(uGlowCol, vec3(1.0, 0.85, 0.45), crust * crust * (1.0 - land));
+    col += hot * (glow * 2.2 + cracks * 1.5) * lavaSea * (1.0 - 0.8 * cl);
+  }
+  // 雲
+  float cday = smoothstep(-soft, soft * 1.6, ndlS) * clamp(ndlS * 0.9 + 0.1, 0.0, 1.0) * vis;
+  col = mix(col, cloudC * sunC * cday + cloudC * 0.004, cl * 0.94);
+  // 夜側：都市の灯とオーロラ
+  float night = smoothstep(0.08, -0.22, ndlS);
+  if (uEmi.x > 0.0) {
+    float region = smoothstep(0.5, 0.72, vnoise(w * 2.2 + 70.0));
+    float dots = smoothstep(0.58, 0.92, vnoise(q * 95.0 + uSeed)) * smoothstep(0.35, 0.7, vnoise(q * 31.0 + uSeed.yzx));
+    float coast = smoothstep(0.5, 0.0, el);
+    col += uGlowCol * dots * region * coast * land * (1.0 - ice) * night * (1.0 - 0.85 * cl) * uEmi.x * 5.0;
+  }
+  if (uEmi.z > 0.0) {
+    float ring = exp(-pow((lat - 0.86 + 0.05 * (vnoise(q * 6.0 + uTime * 0.05) - 0.5)) / 0.035, 2.0));
+    float curtain = 0.4 + 0.6 * vnoise(vec3(q.xz * 26.0, uTime * 0.25));
+    col += mix(vec3(0.1, 1.0, 0.45), vec3(0.7, 0.2, 1.0), vnoise(q * 9.0 + 3.0)) * ring * curtain * (0.25 + 0.75 * night) * uEmi.z * 0.9;
+  }
+  // 大気の散乱：ふちほど厚く見える
+  float rim = pow(1.0 - max(dot(n, -rd), 0.0), 2.6);
+  float lit = smoothstep(-0.3, 0.45, ndlS);
+  col = mix(col, col * 0.75 + uAtmoCol * 0.2 * lit, atmo * 0.35);
+  col += uAtmoCol * (rim * 1.2 + 0.05) * atmo * lit * uSunCol;
+  return col;
+}
+
+// ---- ガス惑星
+vec3 shadeGas(vec3 n, vec3 rd, vec3 q) {
+  // 嵐：中心のまわりで模様をねじる
+  float sw = 0.0;
+  if (uStorm.w > 0.0) {
+    vec3 sc = normalize(uStorm.xyz);
+    float ang = acos(clamp(dot(q, sc), -1.0, 1.0));
+    sw = exp(-pow(ang / uStorm.w, 2.0));
+    float a = sw * 2.6;
+    q = q * cos(a) + cross(sc, q) * sin(a) + sc * dot(sc, q) * (1.0 - cos(a));
+  }
+  vec3 w = q * vec3(1.6, 5.5, 1.6) + uSeed + vec3(0.0, 0.0, uTime * 0.004);
+  float turb = fbm(w + warp3(w * 0.8) * 0.9, 5);
+  float lat = q.y + (turb - 0.5) * uTer.z * (1.0 - 0.6 * abs(q.y));
+  float bc = lat * uEmi.w;
+  float v = 0.5 + 0.5 * sin(bc * PI + 3.0 * n1(bc * 0.6 + uSeed.x));
+  v = mix(v, n1(bc * 1.7 + uSeed.y * 3.0), 0.35);
+  float streak = fbm(q * vec3(3.0, 26.0, 3.0) + uSeed.yzx + turb * 1.5, 4);
+  v += (streak - 0.5) * uTer.w;
+  vec3 alb = pal(v);
+  alb = mix(alb, uGlowCol, sw * 0.75);
+  alb *= 0.82 + 0.36 * streak;
+  // 極はすこし暗く、色が沈む
+  alb = mix(alb, alb * vec3(0.7, 0.75, 0.85), smoothstep(0.6, 0.98, abs(q.y)));
+
+  float ndl = dot(n, uSun);
+  float vis = sunVisRing(n) * sunVisMoons(n);
+  float day = smoothstep(-0.12, 0.3, ndl) * clamp(ndl * 0.9 + 0.1, 0.0, 1.0) * vis;
+  float limb = pow(max(dot(n, -rd), 0.0), 0.45);
+  vec3 sunC = uSunCol * mix(vec3(1.0, 0.5, 0.25), vec3(1.0), smoothstep(-0.05, 0.4, ndl));
+  vec3 col = alb * sunC * day * limb + alb * 0.004;
+  float rim = pow(1.0 - max(dot(n, -rd), 0.0), 3.0);
+  col += uAtmoCol * rim * 1.3 * uClim.w * smoothstep(-0.3, 0.45, ndl) * uSunCol;
+  if (uEmi.z > 0.0) {
+    float ring = exp(-pow((abs(q.y) - 0.9) / 0.03, 2.0));
+    col += vec3(0.25, 0.6, 1.0) * ring * (0.4 + 0.6 * vnoise(vec3(q.xz * 20.0, uTime * 0.3))) * uEmi.z;
+  }
+  return col;
+}
+
+vec3 shadeMoon(int i, vec3 p, vec3 rd) {
+  vec3 c = uMoon[i].xyz;
+  vec3 n = normalize(p - c);
+  float tex = fbm(n * 5.0 + float(i) * 13.0 + uSeed, 4);
+  float crater = smoothstep(0.62, 0.7, vnoise(n * 11.0 + float(i) * 7.0));
+  vec3 alb = uMoonCol[i] * (0.55 + 0.7 * tex) * (1.0 - 0.3 * crater);
+  float ndl = max(dot(n, uSun), 0.0);
+  return alb * uSunCol * ndl * sunVisPlanet(p) + alb * 0.004;
+}
+
+void main() {
+  vec2 px = (gl_FragCoord.xy - uCenter) / min(uRes.x, uRes.y);
+  vec3 rd = normalize(uBasis * vec3(px * 2.0 * uFov, 1.0));
+  vec3 ro = uCam;
+
+  // いちばん手前の不透明なもの：惑星か月
+  float tP = sphere(ro, rd, vec3(0.0), 1.0);
+  float tBest = tP > 0.0 ? tP : 1e9;
+  int hit = tP > 0.0 ? 0 : -1;
+  for (int i = 0; i < 3; i++) {
+    if (uMoon[i].w <= 0.0) continue;
+    float tm = sphere(ro, rd, uMoon[i].xyz, uMoon[i].w);
+    if (tm > 0.0 && tm < tBest) { tBest = tm; hit = i + 1; }
+  }
+
+  vec3 col;
+  float sunDot = dot(rd, uSun);
+  if (hit == 0) {
+    vec3 p = ro + rd * tP;
+    vec3 q = uRot * p;
+    col = uGas > 0.5 ? shadeGas(p, rd, q) : shadeRock(p, rd, q, uPix * tP);
+  } else if (hit > 0) {
+    col = shadeMoon(hit - 1, ro + rd * tBest, rd);
+  } else {
+    col = sky(rd);
+    // 太陽
+    float ang = acos(clamp(sunDot, -1.0, 1.0));
+    col += uSunCol * (smoothstep(0.02, 0.014, ang) * 60.0 + 0.0009 / (ang * ang + 0.0004) + 0.05 * exp(-ang * 5.0));
+    // 大気のふち：惑星をかすめる視線ほど明るい
+    float tca = -dot(ro, rd);
+    if (tca > 0.0 && uClim.w > 0.0) {
+      vec3 c = ro + rd * tca;
+      float d = length(c);
+      float glow = exp(-(d - 1.0) / (0.012 + 0.035 * uClim.w));
+      float lit = smoothstep(-0.4, 0.35, dot(c / d, uSun));
+      float fwd = 1.0 + 5.0 * pow(max(sunDot, 0.0), 6.0);
+      col += uAtmoCol * uSunCol * glow * lit * fwd * (0.5 + 0.9 * uClim.w);
+    }
+  }
+
+  // 環（半透明なので最後に重ねる）
+  if (uRing.z > 0.0) {
+    float dn = dot(rd, uAxis);
+    if (abs(dn) > 1e-5) {
+      float tr = -dot(ro, uAxis) / dn;
+      if (tr > 0.0 && tr < tBest) {
+        vec3 p = ro + rd * tr;
+        float r = length(p);
+        float dens = ringDens(r);
+        if (dens > 0.0) {
+          float x = (r - uRing.x) / (uRing.y - uRing.x);
+          vec3 rc = uRingCol * (0.75 + 0.5 * n1(x * 31.0 + uRing.w * 5.0));
+          // 太陽と同じ側から見れば反射光、反対側からなら透けてくる光
+          float same = step(0.0, dot(uSun, uAxis) * dot(-rd, uAxis));
+          float fwd = pow(max(sunDot, 0.0), 8.0);
+          float litR = mix(0.2 * (1.0 - dens * 0.6) + fwd * 0.9, 0.52, same) * sunVisPlanet(p) * sunVisMoons(p);
+          vec3 lc = rc * uSunCol * litR + rc * 0.004;
+          float a = clamp(dens * (0.55 + 0.45 / max(abs(dn), 0.25)), 0.0, 0.97);
+          col = mix(col, lc, a);
+        }
+      }
+    }
+  }
+  outColor = vec4(col * uAppear, 1.0);
+}`;
+
+// ================= 名前 → 惑星 =================
+const lin = c => c.map(v => Math.pow(v, 2.2));
+function hsl(h, s, l) {
+  h = ((h % 360) + 360) % 360 / 360;
+  const f = n => {
+    const k = (n + h * 12) % 12, a = s * Math.min(l, 1 - l);
+    return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+  };
+  return lin([f(0), f(8), f(4)]);
+}
+const mixc = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
+const norm = v => { const l = Math.hypot(...v); return v.map(x => x / l); };
+
+const TYPES = [
+  ['terran', 24], ['ocean', 11], ['desert', 13], ['ice', 12], ['lava', 9], ['gas', 16], ['icegiant', 8], ['toxic', 7],
+];
+const TYPE_JA = {
+  terran: '地球型惑星', ocean: '海洋惑星', desert: '砂漠惑星', ice: '氷の惑星',
+  lava: '溶岩惑星', gas: '巨大ガス惑星', icegiant: '巨大氷惑星', toxic: '厚い雲の惑星',
+};
+
+function normalizeName(s) {
+  return (s || '').normalize('NFKC').replace(/\s+/g, ' ').trim().slice(0, 24);
+}
+
+function makePlanet(rawName) {
+  const name = normalizeName(rawName) || 'Kanata';
+  const R = Kit.rng('nameplanet/1/' + name.toLowerCase());
+  let roll = R() * TYPES.reduce((s, t) => s + t[1], 0), type = TYPES[0][0];
+  for (const [t, w] of TYPES) { if ((roll -= w) < 0) { type = t; break; } }
+  const gas = type === 'gas' || type === 'icegiant';
+  const P = {
+    name, type, gas,
+    seed: [R.range(0, 60), R.range(0, 60), R.range(0, 60)],
+    ter: [0.5, 2.4, 0.9, 0.3], clim: [0.8, 0.4, 2.6, 0.6], emi: [0, 0, 0, 0],
+    pal: [], cloud: lin([0.95, 0.96, 0.98]), atmo: lin([0.35, 0.6, 1.0]), glow: lin([1.0, 0.72, 0.36]),
+    ring: [0, 0, 0, 0], ringCol: lin([0.8, 0.74, 0.62]), storm: [0, 0, 1, 0], moons: [],
+    rare: 0, tags: [],
+  };
+  const S = {};   // 表示する数値
+
+  if (type === 'terran' || type === 'ocean') {
+    // 植生の色：ほとんどは緑。まれに紫・青緑・赤
+    const vr = R();
+    let vh, vTag = '';
+    if (vr < 0.68) vh = R.range(85, 135);
+    else if (vr < 0.80) { vh = R.range(275, 320); vTag = '紫の森'; P.rare += 2; }
+    else if (vr < 0.91) { vh = R.range(160, 185); vTag = '青緑の森'; P.rare += 1; }
+    else { vh = R.range(350, 378); vTag = '赤い森'; P.rare += 2; }
+    const sr = R();
+    const sh = sr < 0.8 ? R.range(200, 225) : sr < 0.92 ? R.range(168, 185) : R.range(250, 275);
+    if (sr >= 0.92) { P.rare += 1; P.tags.push('すみれ色の海'); }
+    P.pal = [
+      hsl(sh + 8, 0.72, 0.1), hsl(sh - 8, 0.66, 0.3),
+      hsl(vh, R.range(0.45, 0.65), R.range(0.2, 0.3)), hsl(vh - 40, R.range(0.3, 0.45), R.range(0.34, 0.44)),
+      hsl(R.range(15, 40), 0.14, R.range(0.5, 0.68)),
+    ];
+    if (vTag) P.tags.push(vTag);
+    P.ter = [type === 'ocean' ? R.range(0.58, 0.63) : R.range(0.47, 0.54), R.range(1.9, 3.2), R.range(0.6, 1.5), R.range(0.15, 0.6)];
+    P.clim = [R.range(0.7, 0.95), type === 'ocean' ? R.range(0.45, 0.75) : R.range(0.3, 0.6), R.range(3.0, 4.6), R.range(0.5, 0.85)];
+    P.atmo = hsl(sh - 5 + R.range(-10, 10), 0.85, 0.6);
+    S.temp = Math.round(type === 'ocean' ? R.range(4, 31) : R.range(-6, 33));
+    const lr = R();
+    if (type === 'terran' && lr < 0.3) { P.emi[0] = R.range(0.7, 1.2); S.life = '文明あり'; P.civ = true; P.rare += 2; P.glow = hsl(R.range(28, 48), 0.9, 0.62); }
+    else if (lr < 0.62) S.life = type === 'ocean' ? '海の生きもの' : '動植物';
+    else if (lr < 0.9) S.life = '植物';
+    else S.life = '微生物';
+    if (R.chance(0.3)) { P.emi[2] = R.range(0.6, 1.0); P.tags.push('オーロラ'); P.rare += 1; }
+  } else if (type === 'desert') {
+    const h = R.pick([R.range(18, 34), R.range(18, 34), R.range(36, 48), R.range(2, 14)]);
+    P.pal = [
+      hsl(h + 150, 0.4, 0.14), hsl(h + 140, 0.42, 0.3),
+      hsl(h, R.range(0.36, 0.56), R.range(0.3, 0.4)), hsl(h - 8, R.range(0.3, 0.5), R.range(0.44, 0.56)),
+      hsl(h + 8, 0.3, R.range(0.6, 0.75)),
+    ];
+    P.ter = [R.chance(0.35) ? R.range(0.36, 0.42) : 0.2, R.range(1.8, 3.2), R.range(0.8, 1.8), R.range(0.35, 0.8)];
+    P.clim = [R.chance(0.4) ? R.range(0.88, 0.97) : 2, R.chance(0.6) ? R.range(0.05, 0.25) : 0, R.range(3.0, 4.4), R.range(0.15, 0.45)];
+    P.cloud = hsl(h + 5, 0.3, 0.8);
+    P.atmo = hsl(h + R.range(-12, 10), 0.6, 0.66);
+    S.temp = Math.round(R.range(28, 130));
+    S.life = R.chance(0.12) ? '砂の下に微生物' : 'なし';
+    if (P.ter[0] > 0.3) P.tags.push('塩の湖');
+  } else if (type === 'ice') {
+    const h = R.range(185, 215);
+    P.pal = [
+      hsl(h + 10, 0.55, 0.16), hsl(h, 0.5, 0.42),
+      hsl(h, 0.28, 0.66), hsl(h - 8, 0.18, 0.8), hsl(h, 0.1, 0.93),
+    ];
+    P.ter = [R.range(0.36, 0.47), R.range(1.6, 3.0), R.range(0.5, 1.4), R.range(0.6, 0.95)];
+    P.clim = [R.range(0.5, 0.75), R.range(0.1, 0.4), R.range(3.0, 4.4), R.range(0.25, 0.55)];
+    P.atmo = hsl(h + R.range(-12, 12), 0.6, 0.7);
+    S.temp = Math.round(R.range(-185, -55));
+    S.life = R.chance(0.2) ? '氷の下の海に？' : 'なし';
+    if (R.chance(0.5)) { P.emi[2] = R.range(0.7, 1.1); P.tags.push('オーロラ'); P.rare += 1; }
+  } else if (type === 'lava') {
+    const h = R.range(8, 30);
+    P.pal = [
+      hsl(h, 0.5, 0.03), hsl(h, 0.4, 0.05),
+      hsl(h, 0.2, 0.07), hsl(h + 5, 0.12, 0.13), hsl(h, 0.06, 0.22),
+    ];
+    P.ter = [R.range(0.4, 0.47), R.range(1.8, 3.0), R.range(0.8, 1.7), R.range(0.5, 0.9)];
+    P.clim = [2, R.chance(0.6) ? R.range(0.1, 0.35) : 0, R.range(3.0, 4.2), R.range(0.3, 0.6)];
+    P.emi[1] = 1;
+    P.cloud = lin([0.2, 0.17, 0.16]);
+    P.glow = hsl(h + 6, 1, 0.52);
+    P.atmo = hsl(h + 4, 0.9, 0.5);
+    S.temp = Math.round(R.range(620, 1900) / 10) * 10;
+    S.life = 'なし';
+    P.rare += 1;
+  } else if (type === 'toxic') {
+    const h = R.pick([R.range(45, 70), R.range(45, 70), R.range(80, 110), R.range(20, 35)]);
+    P.pal = [
+      hsl(h, 0.4, 0.1), hsl(h, 0.4, 0.2),
+      hsl(h - 10, 0.35, 0.22), hsl(h - 16, 0.3, 0.32), hsl(h, 0.2, 0.45),
+    ];
+    P.ter = [0.3, R.range(1.6, 2.6), 1.0, 0.4];
+    P.clim = [2, R.range(0.9, 1.0), R.range(1.4, 2.2), R.range(0.85, 1.0)];
+    P.cloud = hsl(h, R.range(0.45, 0.7), R.range(0.5, 0.62));
+    P.atmo = hsl(h + R.range(-8, 8), 0.75, 0.62);
+    S.temp = Math.round(R.range(290, 490));
+    S.life = R.chance(0.1) ? '雲の中に微生物？' : 'なし';
+  } else {
+    // ガス・氷の巨大惑星
+    const ig = type === 'icegiant';
+    let hues;
+    const gr = R();
+    if (ig) hues = gr < 0.7 ? [R.range(195, 225), 14] : [R.range(160, 185), 12];
+    else if (gr < 0.45) hues = [R.range(22, 40), 18];                // 木星ふう
+    else if (gr < 0.70) hues = [R.range(40, 55), 10];                // 土星ふう
+    else if (gr < 0.84) { hues = [R.range(320, 350), 30]; P.tags.push('桃色の縞'); P.rare += 2; }
+    else if (gr < 0.94) { hues = [R.range(255, 285), 26]; P.tags.push('紫の縞'); P.rare += 2; }
+    else { hues = [R.range(110, 150), 24]; P.tags.push('緑の縞'); P.rare += 3; }
+    const [h0, spread] = hues;
+    const sat = ig ? R.range(0.45, 0.7) : R.range(0.3, 0.6);
+    P.pal = [0, 1, 2, 3, 4].map(i => hsl(h0 + (R() - 0.5) * 2 * spread, sat * R.range(0.6, 1.1), ig ? R.range(0.36, 0.62) : [0.22, 0.38, 0.52, 0.66, 0.8][i] + R.range(-0.05, 0.05)));
+    P.ter = [0, 0, ig ? R.range(0.04, 0.1) : R.range(0.1, 0.24), ig ? R.range(0.06, 0.14) : R.range(0.16, 0.34)];
+    P.emi[3] = ig ? R.range(2.5, 5) : R.range(6, 13);
+    P.clim = [2, 0, 0, R.range(0.6, 0.95)];
+    P.atmo = hsl(h0 + (ig ? 0 : R.range(-15, 15)), 0.7, 0.66);
+    if (R.chance(ig ? 0.35 : 0.6)) {
+      const lat = R.range(-0.5, 0.5), lon = R.range(0, 6.28), c = Math.cos(lat);
+      P.storm = [c * Math.cos(lon), Math.sin(lat), c * Math.sin(lon), R.range(0.1, 0.2)];
+      P.glow = hsl(ig ? h0 - 30 : R.range(5, 20), 0.7, ig ? 0.2 : 0.42);
+      P.tags.push('巨大な嵐');
+    }
+    if (R.chance(0.35)) { P.emi[2] = R.range(0.5, 0.9); P.tags.push('オーロラ'); }
+    S.temp = Math.round(R.range(-215, -95));
+    S.life = 'なし';
+  }
+
+  // 環
+  if (R.chance(gas ? 0.55 : 0.1)) {
+    const inner = R.range(1.25, 1.6);
+    P.ring = [inner, inner + R.range(0.45, 1.25), R.range(0.55, 0.95), R.range(1, 50)];
+    P.ringCol = gas ? mixc(P.pal[3], lin([0.85, 0.8, 0.7]), 0.6) : hsl(R.range(15, 45), 0.25, 0.62);
+    P.tags.push('環');
+    P.rare += gas ? 1 : 3;
+  }
+  // 自転軸の傾き
+  const tilt = R.range(0.05, 0.5) * (R.chance(0.5) ? 1 : -1), tdir = R.range(0, 6.28);
+  P.axis = norm([Math.sin(tilt) * Math.cos(tdir), Math.cos(tilt), Math.sin(tilt) * Math.sin(tdir)]);
+  S.tilt = Math.round(Math.abs(tilt) * 180 / Math.PI);
+  // 月
+  const nm = [0, 0, 1, 1, 1, 2, 2, 3][R.int(0, 7)] + (gas && R.chance(0.5) ? 1 : 0);
+  const moonN = Math.min(3, nm);
+  let orbit = (P.ring[2] ? P.ring[1] : 1.5) + R.range(0.5, 0.9);
+  for (let i = 0; i < moonN; i++) {
+    P.moons.push({
+      r: orbit, size: R.range(0.05, 0.14), phase: R.range(0, 6.28), speed: R.range(0.05, 0.11) / Math.pow(orbit / 2, 1.5),
+      inc: R.range(-0.25, 0.25), node: R.range(0, 6.28),
+      col: hsl(R.range(0, 360), R.range(0.03, 0.22), R.range(0.4, 0.66)),
+    });
+    orbit += R.range(0.6, 1.1);
+  }
+  if (moonN === 3) P.rare += 1;
+  S.moons = moonN + (gas ? R.int(4, 70) : 0);
+
+  // 主星
+  const sr = R();
+  if (sr < 0.55) { P.sunCol = lin([1.0, 0.96, 0.9]); S.star = '黄色い星'; }
+  else if (sr < 0.78) { P.sunCol = lin([1.0, 0.82, 0.66]); S.star = '橙色の星'; }
+  else if (sr < 0.92) { P.sunCol = lin([0.86, 0.92, 1.0]); S.star = '青白い星'; }
+  else { P.sunCol = lin([1.0, 0.66, 0.5]); S.star = '赤い小さな星'; P.rare += 1; }
+  P.sunCol = P.sunCol.map(v => v * 1.7);
+  const sa = R.range(0.75, 1.4) * (R.chance(0.5) ? 1 : -1), se = R.range(-0.1, 0.35);
+  P.sun = norm([Math.sin(sa) * Math.cos(se), Math.sin(se), Math.cos(sa) * Math.cos(se)]);
+
+  // 数値
+  S.radius = gas ? R.range(type === 'icegiant' ? 3.3 : 6, type === 'icegiant' ? 5.2 : 13.5) : R.range(type === 'terran' || type === 'ocean' ? 0.7 : 0.35, type === 'terran' || type === 'ocean' ? 1.8 : 2.3);
+  S.gravity = gas ? R.range(0.8, 2.6) : S.radius * R.range(0.75, 1.2);
+  S.day = gas ? R.range(8, 22) : Math.exp(R.range(Math.log(9), Math.log(110)));
+  S.year = gas ? R.range(6, 180) : R.range(0.25, 3.2);
+  P.spinPeriod = gas ? R.range(38, 60) : Kit.clamp(S.day * 1.6, 48, 130);   // 画面上で 1 回転する秒数
+  P.dist = P.ring[2] ? Math.max(4.6, P.ring[1] * 2.55) : 4.3;
+  // レア度：めずらしい特徴の点数を星の数に
+  P.stars = P.rare >= 6 ? 5 : P.rare >= 4 ? 4 : P.rare >= 2 ? 3 : P.rare >= 1 ? 2 : 1;
+  const hd = Kit.hashStr('desig/' + name.toLowerCase());
+  P.desig = `KNT-${String(hd[0] % 9000 + 1000)} ${'bcdefgh'[hd[1] % 7]}`;
+  P.stats = S;
+  P.flavor = flavor(P, R);
+  return P;
+}
+
+function flavor(P, R) {
+  const base = {
+    terran: ['海と大陸が雲の下にのぞく、おだやかな惑星。', '大陸が海に浮かび、雲がゆっくり流れていく。', '緑と海がまだらに広がる、住みやすそうな星。'],
+    ocean: ['見わたすかぎりの海。陸地は小さな島がいくつかあるだけ。', '深い海が星をおおい、厚い雲がその上を渡っていく。'],
+    desert: ['乾いた大地がどこまでも続く。風が砂の模様を書きかえている。', '砂と岩の惑星。昼は焼けつき、夜は凍える。'],
+    ice: ['全球が氷におおわれている。亀裂が青く光って走る。', '凍りついた静かな星。氷の下には海が眠っているかもしれない。'],
+    lava: ['溶岩の海が赤く脈打つ。夜側でも自分の光で輝いている。', '生まれたばかりの灼熱の星。地殻のすきまから火がのぞく。'],
+    gas: ['色とりどりの雲の帯が、猛烈な風に引きのばされて流れている。', '固い地面のない巨大な星。縞模様は一本一本が嵐の帯。'],
+    icegiant: ['冷たく澄んだ色の巨大惑星。深い大気が光を青く散らす。', '静かに見えるが、雲の下では音速を超える風が吹いている。'],
+    toxic: ['厚い雲が全球を閉ざし、地表は誰にも見えない。', '重い大気と濃い雲の星。雲の上は明るく、下は灼熱。'],
+  }[P.type];
+  let s = R.pick(base);
+  const extra = [];
+  if (P.civ) extra.push('夜側には都市の灯がともる');
+  for (const t of P.tags) {
+    if (t === '環') extra.push(P.gas ? '氷の環が赤道をめぐる' : '岩石惑星にはめずらしく環をもつ');
+    else if (t === 'オーロラ') extra.push('極にはオーロラの輪');
+    else if (t === '巨大な嵐') extra.push('何百年も消えない嵐の目がある');
+    else if (t === '塩の湖') extra.push('わずかに塩の湖が残る');
+    else if (/森$/.test(t)) extra.push(`${t}が大陸をおおう`);
+    else if (/縞$/.test(t)) extra.push(`${t}はとてもめずらしい`);
+    else if (t === 'すみれ色の海') extra.push('海はすみれ色');
+  }
+  if (extra.length) s += extra.slice(0, 3).join('。') + '。';
+  return s;
+}
+
+// ================= 描画 =================
+const canvas = document.getElementById('c');
+const G = Kit.initGL(canvas);
+if (!G) { Kit.fail(); throw new Error('no webgl2'); }
+const gl = G.gl;
+const prog = G.program(FS);
+const bloom = Kit.Bloom(G, 6);
+const params = new URLSearchParams(location.search);
+const scaler = Kit.Scaler({ start: 0.8, max: Math.min(window.devicePixelRatio || 1, 2), min: 0.3 });
+if (params.has('q')) { scaler.scale = +params.get('q'); scaler.lock(true); }
+
+let P = null;
+const cam = { yaw: 0, pitch: 0.12, dist: 4.3, tDist: 4.3 };
+let simT = params.has('t') ? +params.get('t') : 0, prevNow = 0, lastNow = 0, appear = 0, idle = 99;
+const card = document.getElementById('card');
+
+Kit.pointers(canvas, {
+  onDrag(dx, dy) { cam.yaw -= dx * 0.006; cam.pitch = Kit.clamp(cam.pitch + dy * 0.006, -1.45, 1.45); idle = 0; },
+  onPinch(k) { cam.tDist = Kit.clamp(cam.tDist / k, 2.2, 14); idle = 0; },
+  onDown() { if (document.activeElement === input) input.blur(); },
+});
+canvas.addEventListener('keydown', e => {
+  const s = 0.08;
+  if (e.key === 'ArrowLeft') cam.yaw -= s;
+  else if (e.key === 'ArrowRight') cam.yaw += s;
+  else if (e.key === 'ArrowUp') cam.pitch = Kit.clamp(cam.pitch + s, -1.45, 1.45);
+  else if (e.key === 'ArrowDown') cam.pitch = Kit.clamp(cam.pitch - s, -1.45, 1.45);
+  else return;
+  e.preventDefault();
+});
+
+function mat3rot(axis, ang) {
+  // 自転軸を Y に合わせる座標系へ移してから、自転のぶんだけ回す（world → local）
+  const y = axis;
+  let x = norm([y[1], -y[0], 0.0001]);
+  const z = [x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]];
+  const c = Math.cos(ang), s = Math.sin(ang);
+  const r0 = [0, 1, 2].map(i => c * x[i] + s * z[i]);
+  const r2 = [0, 1, 2].map(i => -s * x[i] + c * z[i]);
+  // 列優先で渡す：行が r0, y, r2
+  return [r0[0], y[0], r2[0], r0[1], y[1], r2[1], r0[2], y[2], r2[2]];
+}
+
+// o: { w, h, cx, cy } を渡すと、その大きさ・中心で 1 枚だけ描く（共有カード用）
+function draw(o) {
+  const W = o ? o.w : canvas.width, H = o ? o.h : canvas.height;
+  bloom.resize(W, H);
+  const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+  const dir = [cp * Math.sin(cam.yaw), sp, cp * Math.cos(cam.yaw)];
+  const pos = dir.map(v => v * cam.dist);
+  const fwd = dir.map(v => -v);
+  const right = [Math.cos(cam.yaw), 0, -Math.sin(cam.yaw)];
+  const up = [-sp * Math.sin(cam.yaw), cp, -sp * Math.cos(cam.yaw)];
+  const fov = 0.5;
+  const u = prog.use();
+  G.bind(bloom.scene);
+  gl.viewport(0, 0, W, H);
+  gl.uniform2f(u.uRes, W, H);
+  gl.uniform2f(u.uCenter, o ? o.cx : centerX * W, o ? o.cy : centerY * H);
+  gl.uniform1f(u.uTime, simT);
+  gl.uniform1f(u.uFov, fov);
+  gl.uniform1f(u.uPix, 2 * fov / Math.min(W, H));
+  gl.uniform1f(u.uGas, P.gas ? 1 : 0);
+  gl.uniform1f(u.uAppear, o ? 1 : appear);
+  gl.uniform3fv(u.uCam, pos);
+  gl.uniform3fv(u.uSun, P.sun);
+  gl.uniform3fv(u.uSunCol, P.sunCol);
+  gl.uniform3fv(u.uSeed, P.seed);
+  gl.uniform3fv(u.uAxis, P.axis);
+  gl.uniformMatrix3fv(u.uBasis, false, [...right, ...up, ...fwd]);
+  gl.uniformMatrix3fv(u.uRot, false, mat3rot(P.axis, -simT * 2 * Math.PI / P.spinPeriod));
+  gl.uniform3fv(u.uPal, P.pal.flat());
+  gl.uniform3fv(u.uCloudCol, P.cloud);
+  gl.uniform3fv(u.uAtmoCol, P.atmo);
+  gl.uniform3fv(u.uGlowCol, P.glow);
+  gl.uniform3fv(u.uRingCol, P.ringCol);
+  gl.uniform4fv(u.uTer, P.ter);
+  gl.uniform4fv(u.uClim, P.clim);
+  gl.uniform4fv(u.uEmi, P.emi);
+  gl.uniform4fv(u.uRing, P.ring);
+  gl.uniform4fv(u.uStorm, P.storm);
+  // 月の位置
+  const mv = new Float32Array(12), mc = new Float32Array(9);
+  P.moons.forEach((m, i) => {
+    const a = m.phase + simT * m.speed;
+    // 赤道面（自転軸に直交）を少し傾けた軌道
+    const y = P.axis;
+    const x = norm([y[1], -y[0], 0.0001]);
+    const z = [x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]];
+    const ca = Math.cos(a), sa = Math.sin(a), tilt = Math.sin(a + m.node) * m.inc;
+    for (let k = 0; k < 3; k++) mv[i * 4 + k] = m.r * (ca * x[k] + sa * z[k] + tilt * y[k]);
+    mv[i * 4 + 3] = m.size;
+    mc.set(m.col, i * 3);
+  });
+  gl.uniform4fv(u.uMoon, mv);
+  gl.uniform3fv(u.uMoonCol, mc);
+  G.draw();
+  bloom.finish({ bloom: 0.75, threshold: 1.15, exposure: 1.0, vignette: 0.45, grain: 0.03, time: simT });
+}
+
+let centerX = 0.5, centerY = 0.5;
+function layout() {
+  // カードに隠れない所へ惑星を寄せる
+  const r = card.getBoundingClientRect(), W = window.innerWidth, H = window.innerHeight;
+  if (r.width < W * 0.8) { centerX = (r.width + (W - r.width) / 2) / W; centerY = 0.5; }
+  else { centerX = 0.5; centerY = 1 - ((H - r.height * 0.86) / 2 + 12) / H; }
+}
+window.addEventListener('resize', layout);
+
+function frame(now) {
+  lastNow = now;
+  const dt = prevNow ? Math.min(0.1, (now - prevNow) / 1000) : 0;
+  if (prevNow) scaler.tick(now - prevNow);
+  prevNow = now;
+  if (!params.has('t')) simT += dt;
+  idle += dt;
+  appear = Math.min(1, appear + dt * 1.6);
+  cam.dist += (cam.tDist - cam.dist) * Math.min(1, dt * 5);
+  if (!Kit.reduced && idle > 4) cam.yaw += dt * 0.02;
+  Kit.fit(canvas, scaler.scale);
+  draw();
+  requestAnimationFrame(frame);
+}
+
+// ================= UI =================
+const input = document.getElementById('pinput');
+const fmt = (v, d) => v.toFixed(d);
+function show(name, push) {
+  P = makePlanet(name);
+  const S = P.stats;
+  document.getElementById('pname').textContent = P.name;
+  document.getElementById('pmeta').innerHTML =
+    `<b>${TYPE_JA[P.type]}</b><span>${P.desig}</span><span class="star" aria-label="レア度 ${P.stars} / 5">${'★'.repeat(P.stars)}${'☆'.repeat(5 - P.stars)}</span>`;
+  document.getElementById('pflavor').textContent = P.flavor;
+  const rows = statRows(P);
+  document.getElementById('pstats').innerHTML = rows.map(([k, v, unit]) => `<div><dt>${k}</dt><dd>${v}${unit ? `<small>${unit}</small>` : ''}</dd></div>`).join('');
+  cam.tDist = P.dist; cam.dist = P.dist * 1.25; cam.yaw = 0; cam.pitch = 0.12; appear = 0; idle = 99;
+  document.title = `${P.name} — NAMEPLANET`;
+  if (push) {
+    const u = new URL(location.href);
+    u.searchParams.set('n', P.name);
+    history.replaceState(null, '', u);
+  }
+  layout();
+}
+function statRows(P) {
+  const S = P.stats;
+  return [
+    ['半径', fmt(S.radius, S.radius < 3 ? 2 : 1), '×地球'],
+    ['重力', fmt(S.gravity, 2), 'G'],
+    ['気温', (S.temp > 0 ? '+' : '') + S.temp, '℃'],
+    ['1日', S.day < 48 ? fmt(S.day, 1) : fmt(S.day / 24, 1), S.day < 48 ? '時間' : '地球日'],
+    ['月', String(S.moons), '個'],
+    ['生命', S.life, ''],
+  ];
+}
+document.getElementById('pform').addEventListener('submit', e => {
+  e.preventDefault();
+  const v = normalizeName(input.value);
+  if (!v) { input.focus(); return; }
+  input.blur();
+  show(v, true);
+});
+const RANDOM = ['ポチ', 'たま', '富士山', 'ラーメン', '月曜日', 'おにぎり', 'ねこ', '東京', 'さくら', 'カレー', 'Tokyo', 'Luna', 'Orion', 'Mochi', 'コーヒー', '温泉', '夏休み', 'ひまわり', '金曜日', 'たこ焼き', '銀河', 'うどん', 'Nova', 'パンダ', '流れ星'];
+document.getElementById('prand').addEventListener('click', () => {
+  let n;
+  do { n = RANDOM[Math.floor(Math.random() * RANDOM.length)]; } while (P && n === P.name);
+  input.value = n;
+  show(n, true);
+});
+
+// 共有カード（1080×1350）：惑星を描き直して、名前と数値を重ねる
+function shareCard() {
+  const W = 1080, H = 1350;
+  const keep = [canvas.width, canvas.height];
+  canvas.width = W; canvas.height = H;
+  draw({ w: W, h: H, cx: W / 2, cy: H * 0.615 });
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const x = c.getContext('2d');
+  x.drawImage(canvas, 0, 0);
+  canvas.width = keep[0]; canvas.height = keep[1];
+  draw();
+
+  const jp = '"Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", "Meiryo", system-ui, sans-serif';
+  const mono = 'ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+  const g = x.createLinearGradient(0, H * 0.6, 0, H);
+  g.addColorStop(0, 'rgba(11,11,13,0)'); g.addColorStop(0.5, 'rgba(11,11,13,.86)'); g.addColorStop(1, 'rgba(11,11,13,.97)');
+  x.fillStyle = g; x.fillRect(0, H * 0.6, W, H * 0.4);
+  const ink = '#f2efe6', dim = 'rgba(242,239,230,.62)';
+  const sp = (px) => { try { x.letterSpacing = px + 'px'; } catch (e) { /* 古いブラウザ */ } };
+  x.textBaseline = 'alphabetic';
+  // 上：題
+  x.fillStyle = ink; x.font = `600 30px ${mono}`; sp(9);
+  x.fillText('NAMEPLANET', 64, 92);
+  x.fillStyle = dim; x.font = `400 26px ${mono}`; sp(3);
+  x.textAlign = 'right'; x.fillText(P.desig, W - 64, 92); x.textAlign = 'left';
+  // 名前（幅に合わせて縮める）
+  let fs = 132; sp(2);
+  do { x.font = `700 ${fs}px ${jp}`; fs -= 4; } while (x.measureText(P.name).width > W - 128 && fs > 40);
+  x.fillStyle = ink; x.shadowColor = 'rgba(0,0,0,.8)'; x.shadowBlur = 24;
+  x.fillText(P.name, 64, 1010);
+  x.shadowBlur = 0;
+  x.font = `600 32px ${jp}`; sp(3);
+  x.fillText(TYPE_JA[P.type], 64, 1066);
+  const tw = x.measureText(TYPE_JA[P.type]).width;
+  x.fillStyle = '#ffc233'; x.font = `400 32px ${jp}`; sp(5);
+  x.fillText('★'.repeat(P.stars) + '☆'.repeat(5 - P.stars), 64 + tw + 28, 1066);
+  // 数値
+  const rows = statRows(P), cw = (W - 128) / 3;
+  rows.forEach(([k, v, unit], i) => {
+    const cx = 64 + (i % 3) * cw, cy = 1128 + Math.floor(i / 3) * 84;
+    x.fillStyle = dim; x.font = `400 21px ${jp}`; sp(4);
+    x.fillText(k, cx, cy);
+    x.fillStyle = ink; sp(0);
+    let f = 36;
+    do { x.font = `600 ${f}px ${jp}`; f -= 2; } while (x.measureText(v + ' ' + unit).width > cw - 20 && f > 18);
+    x.fillText(v, cx, cy + 42);
+    if (unit) {
+      const vw = x.measureText(v).width;
+      x.fillStyle = dim; x.font = `400 21px ${jp}`;
+      x.fillText(unit, cx + vw + 8, cy + 42);
+    }
+  });
+  x.fillStyle = dim; x.font = `400 22px ${jp}`; sp(3);
+  x.fillText('あなたの名前は、どんな星？', 64, H - 46);
+  x.textAlign = 'right'; x.font = `600 22px ${mono}`; sp(5);
+  x.fillText('KANATA LAB', W - 64, H - 46);
+  x.textAlign = 'left';
+  c.toBlob(b => {
+    if (b) Kit.showResult(b, `nameplanet-${Kit.stamp()}.png`, `わたしの名前の惑星は「${TYPE_JA[P.type]}」でした（レア度 ${'★'.repeat(P.stars)}） #NAMEPLANET #KanataLab\n${location.href}`);
+  }, 'image/png');
+}
+
+Kit.chrome({
+  title: 'NAMEPLANET', sub: '名前から生まれる惑星', canvas, name: 'nameplanet',
+  text: '名前から惑星が生まれる #NAMEPLANET #KanataLab',
+  onSnap: shareCard,
+});
+show(params.get('n') || 'Kanata', false);
+if (params.get('n')) input.value = P.name;
+if (params.has('yaw')) cam.yaw = +params.get('yaw');
+if (params.has('pitch')) cam.pitch = +params.get('pitch');
+if (params.has('yaw') || params.has('pitch')) idle = -1e9;
+requestAnimationFrame(frame);
+setTimeout(() => Kit.hint('名前を入れると星が変わる ・ ドラッグで回す ・ カメラで共有カード'), 1200);
+window.__lab = { makePlanet, shareCard, cam, get P() { return P; }, show };
+</script>
+</body>
+</html>
