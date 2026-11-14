@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#12141f">
+<title>カジュアルゲーム モック集</title>
+<style>
+  body { margin: 0; background: #12141f; color: #fff; -webkit-tap-highlight-color: transparent;
+    font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif; }
+  main { max-width: 480px; margin: 0 auto; padding: calc(env(safe-area-inset-top) + 20px) 14px 40px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  .lead { font-size: 13px; opacity: .75; margin: 0 0 18px; line-height: 1.6; }
+  a.card { display: flex; gap: 12px; align-items: center; text-decoration: none; color: inherit;
+    background: #1d2136; border: 2px solid #0a0c18; border-left: 8px solid var(--c); border-radius: 14px;
+    padding: 12px 14px; margin-bottom: 10px; }
+  a.card:active { transform: scale(.98); background: #262b47; }
+  .card b { font-size: 20px; color: var(--c); display: block; }
+  .card i { font-style: normal; font-size: 11px; background: rgba(255,255,255,.12); border-radius: 99px; padding: 2px 8px; }
+  .card span { display: block; font-size: 13px; opacity: .85; margin-top: 4px; line-height: 1.5; }
+  .card .go { margin-left: auto; font-size: 26px; opacity: .6; }
+  footer { font-size: 12px; opacity: .6; margin-top: 18px; line-height: 1.7; }
+  footer a { color: #8fd8ff; }
+</style>
+</head>
+<body>
+<main>
+  <h1>カジュアルゲーム モック集</h1>
+  <p class="lead">縦画面・片手で遊べる 10 本。どれもタップ 1 回で始まり、やられてもすぐ再挑戦できます。<br>下の一文は、そのゲームの「リスクとリターン」です。</p>
+  <div id="list"></div>
+  <footer>
+    設計の点検には <a href="https://github.com/kociden/sakurai-skill">sakurai-skill</a>（非公式のまとめ）を参照。<br>
+    <a href="../index.html">Endless Stair に戻る</a>
+  </footer>
+</main>
+<script>
+  const LIST = [
+    ['nikuhaku', 'ニクハク', 'シューティング', '#ffd23e', '敵に近いほど弾が ×3。でも当たる距離は、当てられる距離。'],
+    ['tsunagi', 'ツナギ', 'パズル', '#3ec1ff', '長くつなぐほど得点は二乗。でも探している間も時間は減る。'],
+    ['gakepita', 'ガケピタ', 'はじき', '#ff5d73', '崖のふちに近いほど高得点。行きすぎたら落ちる。'],
+    ['kabekick', 'カベキック', 'アクション', '#6fe36a', 'コインはトゲのすぐそば。待てば狙えるが、溶岩は待たない。'],
+    ['jintori', 'ジントリ', 'ストラテジー', '#3ec1ff', '兵を半分送れば陣地が取れる。送ったぶん自陣は手薄になる。'],
+    ['pikapika', 'ピカピカ', '作業・育成', '#ffe15a', 'こすって稼ぎ、道具を買うと、こするのが楽になる。'],
+    ['yokubari', 'ヨクバリ', '運だめし', '#ffd23e', '深くもぐるほど宝は増える。サメに会えば今日の袋は空。'],
+    ['kakkin', 'カッキーン', 'スポーツ', '#ffd23e', 'フルスイングは飛距離 1.5 倍。当たるタイミングはずっと狭い。'],
+    ['suberu', 'スベール', 'すべるパズル', '#8fd8ff', '止まれないペンギンを、岩を使って魚まで届ける。'],
+    ['shiwake', 'シワケ', '反射', '#ff5d73', '急ぐほどコンボで点が伸びる。まちがえれば全部失う。'],
+  ];
+  document.getElementById('list').innerHTML = LIST.map(([id, t, g, c, d]) => {
+    let best = 0; try { best = +(localStorage.getItem('mock_' + id) || 0); } catch (e) { }
+    return `<a class="card" style="--c:${c}" href="play.html?g=${id}"><div><b>${t} <i>${g}</i></b><span>${d}</span>${best ? `<span style="color:#ffd23e">ベスト ${best}</span>` : ''}</div><div class="go">›</div></a>`;
+  }).join('');
+</script>
+</body>
+</html>
