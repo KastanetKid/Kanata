@@ -21,7 +21,7 @@
   const GAMES = ['nikuhaku', 'tsunagi', 'gakepita', 'kabekick', 'jintori', 'pikapika', 'yokubari', 'kakkin', 'suberu', 'shiwake'];
   const g = new URLSearchParams(location.search).get('g');
   if (GAMES.includes(g)) { const s = document.createElement('script'); s.src = 'games/' + g + '.js'; document.body.appendChild(s); }
-  else location.replace('index.html');
+  else location.replace('../');
 </script>
 </body>
 </html>

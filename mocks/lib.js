@@ -172,7 +172,7 @@ cv.addEventListener('pointerdown', e => {
   e.preventDefault(); audio();
   try { cv.setPointerCapture(e.pointerId); } catch (er) { }
   const [x, y] = ppos(e); P.x = P.sx = x; P.y = P.sy = y; P.down = true; P.live = false;
-  if (dist(x, y, 24, 28) < 24) { location.href = 'index.html'; return; }
+  if (dist(x, y, 24, 28) < 24) { location.href = '../'; return; }
   if (G.state === 'title') { begin(); sfx.tap(); return; }
   if (G.state === 'over') { if (G.overT > .4) { begin(); sfx.tap(); } return; }
   if (G.state === 'play') { P.live = true; G.def.down && G.def.down(x, y); }
