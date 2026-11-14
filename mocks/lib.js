@@ -117,7 +117,7 @@ function finish() {
 }
 function start(def) {
   G.def = def; def.fmt = def.fmt || (s => '' + s);
-  document.title = def.title + ' | カジュアルゲーム モック集';
+  document.title = def.title + ' | まとめたやーつ';
   document.body.style.background = def.bg;
   try { G.best = +(localStorage.getItem('mock_' + def.id) || 0); } catch (e) { }
   fit(); def.init(); requestAnimationFrame(loop);
