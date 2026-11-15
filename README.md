@@ -48,7 +48,7 @@
 
 ## 起動
 
-ビルド不要。`index.html` をブラウザで開くだけで動く。
+ビルド不要。`stair/index.html` をブラウザで開くだけで動く（サイトのトップ `index.html` は、下のモック集も含めたポータル「まとめたやーつ」）。
 
 GitHub Pages で公開する場合は、リポジトリの Settings → Pages で
 「Deploy from a branch」→ `main` / `/ (root)` を選ぶ（`.nojekyll` 入り）。
@@ -77,3 +77,8 @@ python3 -m http.server 8000
   - フィーバー中は背景のプリズムを暗めにし、階段の蹴込みを段ごとの色にする
 - 階段は左右ジグザグにランダム生成（同じ向きは最大 6 段まで）
 - ベストスコアは `localStorage` に保存
+
+## モック集
+
+`mocks/` に、縦画面で遊べる別ジャンルのモックが 10 本ある（[一覧と説明](mocks/README.md)）。
+トップの `index.html`（ポータル「まとめたやーつ」）から遊べる。
